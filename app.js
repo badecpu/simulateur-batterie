@@ -323,18 +323,23 @@ function updateHistoryStatus() {
 
 function parseTimestamp(raw) {
   if (raw == null || raw === "") return null;
-  let d = new Date(raw);
-  if (!Number.isNaN(d.getTime())) return d;
+  const str = String(raw).trim();
 
-  const m = String(raw).match(
-    /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})[ T]?(\d{1,2})?:?(\d{2})?:?(\d{2})?/
-  );
+  // Format JJ/MM/AAAA[ HH:mm[:ss]] des exports Shelly — testé EN PREMIER, car le
+  // constructeur natif Date() interprète à tort "10/09/2026" comme MM/JJ/AAAA
+  // (format américain) pour les jours ≤ 12, inversant silencieusement jour et mois.
+  const m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})[ T]?(\d{1,2})?:?(\d{2})?:?(\d{2})?$/);
   if (m) {
     let [, dd, mm, yyyy, hh, min, ss] = m;
     if (yyyy.length === 2) yyyy = "20" + yyyy;
-    d = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh || 0), Number(min || 0), Number(ss || 0));
+    const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh || 0), Number(min || 0), Number(ss || 0));
     if (!Number.isNaN(d.getTime())) return d;
   }
+
+  // Sinon, formats standards (ISO, RFC...) via le constructeur natif
+  const d2 = new Date(str);
+  if (!Number.isNaN(d2.getTime())) return d2;
+
   return null;
 }
 
