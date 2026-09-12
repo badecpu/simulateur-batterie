@@ -26,23 +26,27 @@
 
     <div class="card">
       <h2>Import Shelly EM3</h2>
-      <label class="btn btn-primary" for="csvInput">Importer l'historique (CSV)</label>
-      <input type="file" id="csvInput" accept=".csv,text/csv">
-      <div class="file-status" id="fileStatus">Aucun fichier importé pour le moment.</div>
+      <label class="btn btn-primary" for="csvInput">Importer un dossier d'exports (CSV)</label>
+      <input type="file" id="csvInput" accept=".csv,text/csv" multiple webkitdirectory>
+      <button class="btn btn-secondary" id="pickFilesBtn" style="margin-top:8px;">Ou choisir des fichiers un par un</button>
+      <input type="file" id="csvInputFiles" accept=".csv,text/csv" multiple style="display:none;">
+      <div class="file-status" id="fileStatus">Aucune donnée importée pour le moment.</div>
+      <div class="file-status" id="historyStatus"></div>
     </div>
 
     <div class="card" id="mappingCard" style="display:none;">
       <h2>Correspondance des colonnes</h2>
+      <p class="note" style="margin:-6px 0 12px;">À faire une seule fois : la position réelle de la production et de la consommation dépend du câblage de ton Shelly EM, pas d'une lettre de phase fixe.</p>
       <div class="field">
         <label for="mapTime">Horodatage</label>
         <select id="mapTime"></select>
       </div>
       <div class="field">
-        <label for="mapConso">Consommation réseau — Phase A (Linky)</label>
+        <label for="mapConso">Consommation réseau (Linky / import)</label>
         <select id="mapConso"></select>
       </div>
       <div class="field">
-        <label for="mapProd">Production solaire — Phase B</label>
+        <label for="mapProd">Production solaire (PV)</label>
         <select id="mapProd"></select>
       </div>
       <div class="field">
@@ -57,7 +61,13 @@
           <option value="W">W (puissance moyenne sur l'intervalle)</option>
         </select>
       </div>
-      <button class="btn btn-primary" id="runSimBtn">Lancer la simulation</button>
+      <button class="btn btn-primary" id="runSimBtn">Importer et mémoriser</button>
+    </div>
+
+    <div class="card" id="mappingSummaryCard" style="display:none;">
+      <h2>Correspondance mémorisée</h2>
+      <div class="file-status ok" id="mappingSummaryText"></div>
+      <button class="btn btn-secondary" id="editMappingBtn" style="margin-top:10px;">Modifier la correspondance</button>
     </div>
 
     <div id="resultsEmpty" class="empty-state">
@@ -153,6 +163,12 @@
     <div class="settings-actions">
       <button class="btn btn-primary" id="saveSettingsBtn">Enregistrer</button>
       <button class="btn btn-secondary" id="resetSettingsBtn">Réinitialiser</button>
+    </div>
+
+    <div class="card" style="margin-top:18px;">
+      <h2>Données importées</h2>
+      <div class="file-status" id="dataSummaryText">Aucune donnée en mémoire.</div>
+      <button class="btn btn-secondary" id="clearDataBtn" style="margin-top:10px;">Effacer les données et la correspondance</button>
     </div>
   </section>
 
