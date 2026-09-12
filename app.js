@@ -6,7 +6,6 @@
 
 const SETTINGS_KEY = "battSim.settings.v2";
 const DATA_KEY = "battSim.data.v1";
-const ASSUMED_UNIT = "Wh"; // export historique Shelly EM3 : énergie en Wh par ligne
 
 const DEFAULT_SETTINGS = {
   tarifJour: 0.2516,
@@ -145,37 +144,108 @@ function readFileAsText(file) {
   });
 }
 
-function parseCsv(text) {
-  return new Promise((resolve, reject) => {
-    Papa.parse(text, {
-      header: true,
-      skipEmptyLines: true,
-      complete: (result) => resolve(result),
-      error: (err) => reject(err),
-    });
-  });
+/**
+ * Parse le format réel des exports Shelly EM3 : une succession de blocs
+ * ("Phase A", "Phase B", "Phase C", "Total", "Retour Phase A", ...), chacun
+ * suivi d'une ligne d'en-tête "Temps, Wh" puis de lignes "date , valeur".
+ * Retourne un objet { "Phase A": Map(dateStr -> valeur Wh), ... }.
+ */
+function parseShellyBlocks(text) {
+  const sections = {};
+  let current = null;
+  const lines = text.split(/\r?\n/);
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    const commaIdx = line.indexOf(",");
+
+    // Ligne sans virgule : titre de section (ex. "Phase A", "Retour Phase A")
+    if (commaIdx === -1) {
+      current = line;
+      if (!sections[current]) sections[current] = new Map();
+      continue;
+    }
+
+    // Ligne d'en-tête "Temps, Wh" à l'intérieur d'un bloc : on l'ignore
+    if (/^temps/i.test(line)) continue;
+
+    // Ligne de donnée "date , valeur"
+    if (!current) continue;
+    const datePart = line.slice(0, commaIdx).trim();
+    const valPart = line.slice(commaIdx + 1).trim();
+    const val = parseFloat(valPart.replace(",", "."));
+    if (Number.isNaN(val)) continue;
+    sections[current].set(datePart, val);
+  }
+
+  return sections;
+}
+
+function findSection(sections, exactNames) {
+  const keys = Object.keys(sections);
+  for (const name of exactNames) {
+    const match = keys.find((k) => k.trim().toLowerCase() === name.toLowerCase());
+    if (match) return sections[match];
+  }
+  return null;
 }
 
 /**
- * Détecte automatiquement les colonnes Horodatage / Consommation / Production / Retour
- * à partir des en-têtes, par mots-clés sémantiques uniquement (jamais par lettre de
- * phase, car le câblage A/B/C varie d'une installation à l'autre).
+ * Construit les points normalisés {t, hour, prod, conso, retour, durH} en kWh
+ * à partir des blocs "Phase A" (conso réseau), "Phase B" (production PV) et
+ * "Retour Phase A" (surplus exporté, stocké en valeurs négatives dans le fichier).
  */
-function detectColumns(headers) {
-  const find = (include, exclude) =>
-    headers.find((h) => {
-      const low = h.toLowerCase();
-      const included = include.some((k) => low.includes(k));
-      const excluded = (exclude || []).some((k) => low.includes(k));
-      return included && !excluded;
+function buildPointsFromSections(sections) {
+  const consoSection = findSection(sections, ["Phase A"]);
+  const prodSection = findSection(sections, ["Phase B"]);
+  const retourSection = findSection(sections, ["Retour Phase A"]);
+
+  if (!consoSection && !prodSection) return null; // format non reconnu
+
+  const dateKeys = new Set([
+    ...(consoSection ? consoSection.keys() : []),
+    ...(prodSection ? prodSection.keys() : []),
+  ]);
+
+  const dated = [];
+  for (const dateStr of dateKeys) {
+    const date = parseTimestamp(dateStr);
+    if (!date) continue;
+    const consoWh = consoSection ? (consoSection.get(dateStr) || 0) : 0;
+    const prodWh = prodSection ? (prodSection.get(dateStr) || 0) : 0;
+    const retourRawWh = retourSection ? (retourSection.get(dateStr) || 0) : 0;
+    dated.push({
+      tMs: date.getTime(),
+      hour: date.getHours(),
+      consoWh,
+      prodWh,
+      retourWh: Math.max(0, -retourRawWh), // le fichier stocke l'export en négatif
     });
+  }
+  dated.sort((a, b) => a.tMs - b.tMs);
+  if (dated.length === 0) return null;
 
-  const time = find(["time", "date", "horodatage", "timestamp"]);
-  const prod = find(["solar", "pv", "prod", "panneau", "onduleur"], ["retour", "return"]);
-  const conso = find(["conso", "linky", "import", "achat", "grid"], ["retour", "return", "export"]);
-  const retour = find(["retour", "return", "export", "surplus", "injec"]);
+  let intervalHours = 1;
+  if (dated.length > 1) {
+    const diffs = [];
+    for (let i = 1; i < Math.min(dated.length, 200); i++) {
+      diffs.push((dated[i].tMs - dated[i - 1].tMs) / 3600000);
+    }
+    diffs.sort((a, b) => a - b);
+    const median = diffs[Math.floor(diffs.length / 2)];
+    if (median > 0 && Number.isFinite(median)) intervalHours = median;
+  }
 
-  return { time, conso, prod, retour };
+  return dated.map((d) => ({
+    t: d.tMs,
+    hour: d.hour,
+    prod: d.prodWh / 1000,
+    conso: d.consoWh / 1000,
+    retour: d.retourWh / 1000,
+    durH: intervalHours,
+  }));
 }
 
 async function handleSelectedFiles(fileList) {
@@ -194,27 +264,24 @@ async function importFiles(files) {
 
   let addedRows = 0;
   let skippedFiles = 0;
-  let lastDetected = null;
+  let anyRetourFound = false;
 
   for (const file of files) {
     try {
       const text = await readFileAsText(file);
-      const result = await parseCsv(text);
-      if (!result.data || !result.data.length || !result.meta.fields) { skippedFiles++; continue; }
-
-      const map = detectColumns(result.meta.fields);
-      if (!map.time || !map.conso || !map.prod) {
-        console.warn("Colonnes non détectées dans " + file.name, result.meta.fields);
+      const sections = parseShellyBlocks(text);
+      const points = buildPointsFromSections(sections);
+      if (!points) {
+        console.warn("Format non reconnu dans " + file.name, Object.keys(sections));
         skippedFiles++;
         continue;
       }
-      lastDetected = map;
+      if (findSection(sections, ["Retour Phase A"])) anyRetourFound = true;
 
-      const normalized = normalizeRows(result.data, map);
-      for (const row of normalized) {
+      for (const row of points) {
         masterData.set(row.t, row); // une nouvelle importation remplace une éventuelle ligne existante au même horodatage
       }
-      addedRows += normalized.length;
+      addedRows += points.length;
     } catch (err) {
       console.warn("Fichier ignoré (" + file.name + ") :", err);
       skippedFiles++;
@@ -224,11 +291,9 @@ async function importFiles(files) {
   const persistResult = persistMasterData();
 
   let msg = addedRows + " lignes traitées depuis " + files.length + " fichier(s)";
-  if (skippedFiles) msg += " (" + skippedFiles + " fichier(s) ignoré(s) — colonnes non reconnues)";
-  if (lastDetected) {
-    msg += ". Colonnes détectées — Conso : " + lastDetected.conso +
-      " · Prod : " + lastDetected.prod +
-      (lastDetected.retour ? " · Retour : " + lastDetected.retour : " · Retour : non trouvée (surplus supposé nul)");
+  if (skippedFiles) msg += " (" + skippedFiles + " fichier(s) ignoré(s) — format non reconnu)";
+  if (addedRows > 0 && !anyRetourFound) {
+    msg += ". Bloc « Retour Phase A » introuvable : le surplus exporté est compté comme nul.";
   }
   fileStatusEl.textContent = msg;
   fileStatusEl.className = skippedFiles && addedRows === 0 ? "file-status err" : "file-status ok";
@@ -273,61 +338,10 @@ function parseTimestamp(raw) {
   return null;
 }
 
-function toNumber(raw) {
-  if (raw == null || raw === "") return 0;
-  const n = parseFloat(String(raw).replace(",", "."));
-  return Number.isNaN(n) ? 0 : n;
-}
-
 function isNightHour(hour, hcStart, hcEnd) {
   if (hcStart === hcEnd) return false;
   if (hcStart < hcEnd) return hour >= hcStart && hour < hcEnd;
   return hour >= hcStart || hour < hcEnd;
-}
-
-/**
- * Convertit les lignes brutes d'un fichier en points normalisés {t, hour, prod, conso, retour, durH}
- * exprimés en kWh. L'unité des colonnes source est supposée être des Wh par ligne
- * (format standard des exports historiques Shelly). La durée d'intervalle (durH) est
- * déduite des horodatages de CE fichier et conservée pour la simulation (limite de puissance).
- */
-function normalizeRows(rawRows, map) {
-  const dated = [];
-  for (const row of rawRows) {
-    const date = parseTimestamp(row[map.time]);
-    if (!date) continue;
-    dated.push({
-      tMs: date.getTime(),
-      hour: date.getHours(),
-      prodRaw: toNumber(row[map.prod]),
-      consoRaw: toNumber(row[map.conso]),
-      retourRaw: map.retour ? toNumber(row[map.retour]) : 0,
-    });
-  }
-  dated.sort((a, b) => a.tMs - b.tMs);
-  if (dated.length === 0) return [];
-
-  let intervalHours = 1;
-  if (dated.length > 1) {
-    const diffs = [];
-    for (let i = 1; i < Math.min(dated.length, 200); i++) {
-      diffs.push((dated[i].tMs - dated[i - 1].tMs) / 3600000);
-    }
-    diffs.sort((a, b) => a - b);
-    const median = diffs[Math.floor(diffs.length / 2)];
-    if (median > 0 && Number.isFinite(median)) intervalHours = median;
-  }
-
-  const toKwh = (val) => (ASSUMED_UNIT === "kWh" ? val : val / 1000);
-
-  return dated.map((d) => ({
-    t: d.tMs,
-    hour: d.hour,
-    prod: toKwh(d.prodRaw),
-    conso: toKwh(d.consoRaw),
-    retour: Math.max(0, toKwh(d.retourRaw)),
-    durH: intervalHours,
-  }));
 }
 
 /**
