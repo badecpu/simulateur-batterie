@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Simulateur Batterie Solaire</title>
+<meta name="theme-color" content="#10161d">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SimBatterie">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <h1>Simulateur Batterie</h1>
+  <span class="subtitle" id="periodLabel">Aucune donnée</span>
+</header>
+
+<main>
+
+  <!-- ================= DASHBOARD ================= -->
+  <section class="view active" id="view-dashboard">
+
+    <div class="card">
+      <h2>Import Shelly EM3</h2>
+      <label class="btn btn-primary" for="csvInput">Importer l'historique (CSV)</label>
+      <input type="file" id="csvInput" accept=".csv,text/csv">
+      <div class="file-status" id="fileStatus">Aucun fichier importé pour le moment.</div>
+    </div>
+
+    <div class="card" id="mappingCard" style="display:none;">
+      <h2>Correspondance des colonnes</h2>
+      <div class="field">
+        <label for="mapTime">Horodatage</label>
+        <select id="mapTime"></select>
+      </div>
+      <div class="field">
+        <label for="mapConso">Consommation réseau — Phase A (Linky)</label>
+        <select id="mapConso"></select>
+      </div>
+      <div class="field">
+        <label for="mapProd">Production solaire — Phase B</label>
+        <select id="mapProd"></select>
+      </div>
+      <div class="field">
+        <label for="mapRetour">Retour / surplus exporté</label>
+        <select id="mapRetour"></select>
+      </div>
+      <div class="field">
+        <label for="mapUnit">Unité des colonnes ci-dessus</label>
+        <select id="mapUnit">
+          <option value="Wh">Wh (énergie par ligne)</option>
+          <option value="kWh">kWh (énergie par ligne)</option>
+          <option value="W">W (puissance moyenne sur l'intervalle)</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" id="runSimBtn">Lancer la simulation</button>
+    </div>
+
+    <div id="resultsEmpty" class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" stroke-linejoin="round"/></svg>
+      <p>Importez un export CSV Shelly EM3 pour voir la simulation de rentabilité de votre batterie.</p>
+    </div>
+
+    <div id="results" style="display:none;">
+      <div class="kpi-grid">
+        <div class="kpi accent-solar">
+          <div class="label">Production totale</div>
+          <div class="value" id="kpiProd">–</div>
+        </div>
+        <div class="kpi accent-battery">
+          <div class="label">Autoconsommation</div>
+          <div class="value" id="kpiAutoconso">–</div>
+        </div>
+        <div class="kpi accent-battery">
+          <div class="label">Économie générée</div>
+          <div class="value" id="kpiEconomie">–</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Amortissement estimé</div>
+          <div class="value" id="kpiAmortissement">–</div>
+          <div class="note">Extrapolation annuelle à partir de la période importée</div>
+        </div>
+      </div>
+
+      <div class="chart-wrap">
+        <h2>Production, consommation et niveau de batterie</h2>
+        <div class="legend-row">
+          <span class="legend-item"><span class="swatch" style="background:var(--solar)"></span>Production</span>
+          <span class="legend-item"><span class="swatch" style="background:var(--grid)"></span>Consommation réseau</span>
+          <span class="legend-item"><span class="swatch" style="background:var(--battery)"></span>Niveau batterie (%)</span>
+        </div>
+        <canvas id="mainChart" height="220"></canvas>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ================= SETTINGS ================= -->
+  <section class="view" id="view-settings">
+
+    <div class="card card--grid">
+      <h2>Tarifs électricité</h2>
+      <div class="field-row">
+        <div class="field">
+          <label for="tarifJour">Tarif jour (€/kWh)</label>
+          <input type="number" id="tarifJour" step="0.001" min="0">
+        </div>
+        <div class="field">
+          <label for="tarifNuit">Tarif nuit (€/kWh)</label>
+          <input type="number" id="tarifNuit" step="0.001" min="0">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="hcStart">Début heures creuses</label>
+          <input type="number" id="hcStart" step="1" min="0" max="23">
+        </div>
+        <div class="field">
+          <label for="hcEnd">Fin heures creuses</label>
+          <input type="number" id="hcEnd" step="1" min="0" max="23">
+        </div>
+      </div>
+    </div>
+
+    <div class="card card--battery">
+      <h2>Batterie</h2>
+      <div class="field-row">
+        <div class="field">
+          <label for="capaciteKwh">Capacité (kWh)</label>
+          <input type="number" id="capaciteKwh" step="0.1" min="0.1">
+        </div>
+        <div class="field">
+          <label for="prixBatterie">Prix d'achat (€)</label>
+          <input type="number" id="prixBatterie" step="10" min="0">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="socMinPct">SOC minimal (%)</label>
+          <input type="number" id="socMinPct" step="1" min="0" max="90">
+        </div>
+        <div class="field">
+          <label for="socInitialPct">SOC initial (%)</label>
+          <input type="number" id="socInitialPct" step="1" min="0" max="100">
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-actions">
+      <button class="btn btn-primary" id="saveSettingsBtn">Enregistrer</button>
+      <button class="btn btn-secondary" id="resetSettingsBtn">Réinitialiser</button>
+    </div>
+  </section>
+
+</main>
+
+<div class="save-toast" id="saveToast">Paramètres enregistrés</div>
+
+<nav class="tabbar">
+  <button class="active" data-view="dashboard">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V10M12 19V5M20 19v-7" stroke-linecap="round"/></svg>
+    Tableau de bord
+  </button>
+  <button data-view="settings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.04 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.96 19.3a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.04H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.7 8.96a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9.1A1.7 1.7 0 0 0 10.14 3H10.09A2 2 0 1 1 14.09 3h-.05a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.05A1.7 1.7 0 0 0 21 10.14V10.09a2 2 0 1 1 0 3.91h-.05a1.7 1.7 0 0 0-1.55 1z"/></svg>
+    Paramètres
+  </button>
+</nav>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="app.js" defer></script>
+</body>
+</html>
