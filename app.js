@@ -4,19 +4,23 @@
    1. PARAMÈTRES DE SIMULATION — localStorage
    ============================================================ */
 
-const SETTINGS_KEY = "battSim.settings.v1";
-const COLMAP_KEY = "battSim.colmap.v1";
+const SETTINGS_KEY = "battSim.settings.v2";
 const DATA_KEY = "battSim.data.v1";
+const ASSUMED_UNIT = "Wh"; // export historique Shelly EM3 : énergie en Wh par ligne
 
 const DEFAULT_SETTINGS = {
   tarifJour: 0.2516,
   tarifNuit: 0.2068,
   hcStart: 22,
   hcEnd: 6,
+  prixPanneaux: 1200,
   capaciteKwh: 5,
   prixBatterie: 4000,
   socMinPct: 10,
   socInitialPct: 50,
+  rendementPct: 90,
+  puissanceMaxKw: 3,
+  dureeVieCycles: 6000,
 };
 
 function loadSettings() {
@@ -41,10 +45,14 @@ function fillSettingsForm() {
   document.getElementById("tarifNuit").value = settings.tarifNuit;
   document.getElementById("hcStart").value = settings.hcStart;
   document.getElementById("hcEnd").value = settings.hcEnd;
+  document.getElementById("prixPanneaux").value = settings.prixPanneaux;
   document.getElementById("capaciteKwh").value = settings.capaciteKwh;
   document.getElementById("prixBatterie").value = settings.prixBatterie;
   document.getElementById("socMinPct").value = settings.socMinPct;
   document.getElementById("socInitialPct").value = settings.socInitialPct;
+  document.getElementById("rendementPct").value = settings.rendementPct;
+  document.getElementById("puissanceMaxKw").value = settings.puissanceMaxKw;
+  document.getElementById("dureeVieCycles").value = settings.dureeVieCycles;
 }
 
 function readSettingsForm() {
@@ -53,10 +61,14 @@ function readSettingsForm() {
     tarifNuit: parseFloat(document.getElementById("tarifNuit").value) || 0,
     hcStart: clampInt(document.getElementById("hcStart").value, 0, 23, 22),
     hcEnd: clampInt(document.getElementById("hcEnd").value, 0, 23, 6),
+    prixPanneaux: parseFloat(document.getElementById("prixPanneaux").value) || 0,
     capaciteKwh: parseFloat(document.getElementById("capaciteKwh").value) || 0.1,
     prixBatterie: parseFloat(document.getElementById("prixBatterie").value) || 0,
     socMinPct: clampInt(document.getElementById("socMinPct").value, 0, 90, 10),
     socInitialPct: clampInt(document.getElementById("socInitialPct").value, 0, 100, 50),
+    rendementPct: clampInt(document.getElementById("rendementPct").value, 1, 100, 90),
+    puissanceMaxKw: parseFloat(document.getElementById("puissanceMaxKw").value) || 0,
+    dureeVieCycles: parseInt(document.getElementById("dureeVieCycles").value, 10) || 6000,
   };
 }
 
@@ -67,33 +79,10 @@ function clampInt(val, min, max, fallback) {
 }
 
 /* ============================================================
-   2. CORRESPONDANCE DES COLONNES — persistée, définie une fois
+   2. DONNÉES HISTORISÉES — fusion et persistance
    ============================================================ */
 
-function loadColMap() {
-  try {
-    const raw = localStorage.getItem(COLMAP_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch (e) {
-    return null;
-  }
-}
-
-function saveColMap(map) {
-  localStorage.setItem(COLMAP_KEY, JSON.stringify(map));
-}
-
-function clearColMap() {
-  localStorage.removeItem(COLMAP_KEY);
-}
-
-let colMap = loadColMap(); // {time, conso, prod, retour, unit}
-
-/* ============================================================
-   3. DONNÉES HISTORISÉES — fusion et persistance
-   ============================================================ */
-
-// masterData : Map<tMs, {t, prod, conso, retour}> — clé = horodatage en ms
+// masterData : Map<tMs, {t, hour, prod, conso, retour, durH}>
 let masterData = new Map();
 
 function loadMasterData() {
@@ -125,7 +114,7 @@ function clearMasterData() {
 }
 
 /* ============================================================
-   4. NAVIGATION PAR ONGLETS
+   3. NAVIGATION PAR ONGLETS
    ============================================================ */
 
 function switchView(name) {
@@ -141,15 +130,11 @@ document.querySelectorAll("nav.tabbar button").forEach((btn) => {
 });
 
 /* ============================================================
-   5. IMPORT CSV — un ou plusieurs fichiers / un dossier entier
+   4. IMPORT CSV — automatique, sans étape de correspondance
    ============================================================ */
 
 const fileStatusEl = document.getElementById("fileStatus");
 const historyStatusEl = document.getElementById("historyStatus");
-const mappingCard = document.getElementById("mappingCard");
-const mappingSummaryCard = document.getElementById("mappingSummaryCard");
-
-let pendingFiles = null; // fichiers en attente de mapping (première importation)
 
 function readFileAsText(file) {
   return new Promise((resolve, reject) => {
@@ -171,6 +156,28 @@ function parseCsv(text) {
   });
 }
 
+/**
+ * Détecte automatiquement les colonnes Horodatage / Consommation / Production / Retour
+ * à partir des en-têtes, par mots-clés sémantiques uniquement (jamais par lettre de
+ * phase, car le câblage A/B/C varie d'une installation à l'autre).
+ */
+function detectColumns(headers) {
+  const find = (include, exclude) =>
+    headers.find((h) => {
+      const low = h.toLowerCase();
+      const included = include.some((k) => low.includes(k));
+      const excluded = (exclude || []).some((k) => low.includes(k));
+      return included && !excluded;
+    });
+
+  const time = find(["time", "date", "horodatage", "timestamp"]);
+  const prod = find(["solar", "pv", "prod", "panneau", "onduleur"], ["retour", "return"]);
+  const conso = find(["conso", "linky", "import", "achat", "grid"], ["retour", "return", "export"]);
+  const retour = find(["retour", "return", "export", "surplus", "injec"]);
+
+  return { time, conso, prod, retour };
+}
+
 async function handleSelectedFiles(fileList) {
   const files = Array.from(fileList).filter((f) => /\.csv$/i.test(f.name));
   if (files.length === 0) {
@@ -178,47 +185,31 @@ async function handleSelectedFiles(fileList) {
     fileStatusEl.className = "file-status err";
     return;
   }
-
-  if (!colMap) {
-    // Première importation : on lit le premier fichier pour proposer le mapping,
-    // puis on mémorise tous les fichiers pour les traiter une fois le mapping validé.
-    fileStatusEl.textContent = "Lecture de " + files[0].name + " pour détecter les colonnes…";
-    fileStatusEl.className = "file-status";
-    try {
-      const text = await readFileAsText(files[0]);
-      const result = await parseCsv(text);
-      if (!result.meta.fields || !result.meta.fields.length) {
-        throw new Error("En-têtes introuvables dans " + files[0].name);
-      }
-      populateMapping(result.meta.fields);
-      mappingCard.style.display = "block";
-      pendingFiles = files;
-      fileStatusEl.textContent =
-        files.length + " fichier(s) sélectionné(s). Vérifie la correspondance des colonnes ci-dessous, puis clique sur « Importer et mémoriser ».";
-      fileStatusEl.className = "file-status ok";
-    } catch (err) {
-      fileStatusEl.textContent = "Erreur : " + err.message;
-      fileStatusEl.className = "file-status err";
-    }
-    return;
-  }
-
-  // Mapping déjà connu : on traite directement tous les fichiers.
-  await importFiles(files, colMap);
+  await importFiles(files);
 }
 
-async function importFiles(files, map) {
+async function importFiles(files) {
   fileStatusEl.textContent = "Import de " + files.length + " fichier(s) en cours…";
   fileStatusEl.className = "file-status";
 
   let addedRows = 0;
   let skippedFiles = 0;
+  let lastDetected = null;
 
   for (const file of files) {
     try {
       const text = await readFileAsText(file);
       const result = await parseCsv(text);
-      if (!result.data || !result.data.length) { skippedFiles++; continue; }
+      if (!result.data || !result.data.length || !result.meta.fields) { skippedFiles++; continue; }
+
+      const map = detectColumns(result.meta.fields);
+      if (!map.time || !map.conso || !map.prod) {
+        console.warn("Colonnes non détectées dans " + file.name, result.meta.fields);
+        skippedFiles++;
+        continue;
+      }
+      lastDetected = map;
+
       const normalized = normalizeRows(result.data, map);
       for (const row of normalized) {
         masterData.set(row.t, row); // une nouvelle importation remplace une éventuelle ligne existante au même horodatage
@@ -232,10 +223,15 @@ async function importFiles(files, map) {
 
   const persistResult = persistMasterData();
 
-  fileStatusEl.textContent =
-    addedRows + " lignes traitées depuis " + files.length + " fichier(s)" +
-    (skippedFiles ? " (" + skippedFiles + " fichier(s) ignoré(s))" : "") + ".";
-  fileStatusEl.className = skippedFiles ? "file-status err" : "file-status ok";
+  let msg = addedRows + " lignes traitées depuis " + files.length + " fichier(s)";
+  if (skippedFiles) msg += " (" + skippedFiles + " fichier(s) ignoré(s) — colonnes non reconnues)";
+  if (lastDetected) {
+    msg += ". Colonnes détectées — Conso : " + lastDetected.conso +
+      " · Prod : " + lastDetected.prod +
+      (lastDetected.retour ? " · Retour : " + lastDetected.retour : " · Retour : non trouvée (surplus supposé nul)");
+  }
+  fileStatusEl.textContent = msg;
+  fileStatusEl.className = skippedFiles && addedRows === 0 ? "file-status err" : "file-status ok";
 
   if (!persistResult.ok) {
     fileStatusEl.textContent +=
@@ -256,60 +252,8 @@ function updateHistoryStatus() {
   document.getElementById("dataSummaryText").textContent = text;
 }
 
-/* --- Détection / sélection des colonnes (première importation) --- */
-
-function populateMapping(headers) {
-  const selects = {
-    mapTime: document.getElementById("mapTime"),
-    mapConso: document.getElementById("mapConso"),
-    mapProd: document.getElementById("mapProd"),
-    mapRetour: document.getElementById("mapRetour"),
-  };
-
-  Object.values(selects).forEach((sel) => {
-    sel.innerHTML = "";
-    headers.forEach((h) => {
-      const opt = document.createElement("option");
-      opt.value = h;
-      opt.textContent = h;
-      sel.appendChild(opt);
-    });
-  });
-
-  // Détection par mots-clés sémantiques uniquement — jamais par lettre de phase
-  // (la position A/B/C dépend du câblage propre à chaque installation).
-  autoSelect(selects.mapTime, headers, ["time", "date", "horodatage", "timestamp"]);
-  autoSelect(selects.mapProd, headers, ["solar", "pv", "prod", "panneau", "onduleur"], ["retour", "return"]);
-  autoSelect(selects.mapConso, headers, ["conso", "linky", "import", "achat", "grid"], ["retour", "return", "export"]);
-  autoSelect(selects.mapRetour, headers, ["retour", "return", "export", "surplus", "injec"]);
-}
-
-function autoSelect(selectEl, headers, includeKeywords, excludeKeywords) {
-  const match = headers.find((h) => {
-    const low = h.toLowerCase();
-    const included = includeKeywords.some((k) => low.includes(k));
-    const excluded = (excludeKeywords || []).some((k) => low.includes(k));
-    return included && !excluded;
-  });
-  if (match) selectEl.value = match;
-}
-
-function showMappingSummary(map) {
-  mappingCard.style.display = "none";
-  mappingSummaryCard.style.display = "block";
-  document.getElementById("mappingSummaryText").textContent =
-    "Horodatage : " + map.time + " · Conso : " + map.conso +
-    " · Prod : " + map.prod + " · Retour : " + map.retour + " · Unité : " + map.unit;
-}
-
-document.getElementById("editMappingBtn").addEventListener("click", () => {
-  mappingSummaryCard.style.display = "none";
-  mappingCard.style.display = "block";
-  // Repropose les champs actuels comme valeurs par défaut si un fichier est ré-importé.
-});
-
 /* ============================================================
-   6. NORMALISATION + MOTEUR DE SIMULATION
+   5. NORMALISATION + MOTEUR DE SIMULATION
    ============================================================ */
 
 function parseTimestamp(raw) {
@@ -342,9 +286,10 @@ function isNightHour(hour, hcStart, hcEnd) {
 }
 
 /**
- * Convertit les lignes brutes d'un fichier en points normalisés {t, prod, conso, retour}
- * exprimés en kWh. La durée d'intervalle (pour l'unité "W") est déduite des horodatages
- * de CE fichier, car deux exports peuvent avoir des granularités différentes.
+ * Convertit les lignes brutes d'un fichier en points normalisés {t, hour, prod, conso, retour, durH}
+ * exprimés en kWh. L'unité des colonnes source est supposée être des Wh par ligne
+ * (format standard des exports historiques Shelly). La durée d'intervalle (durH) est
+ * déduite des horodatages de CE fichier et conservée pour la simulation (limite de puissance).
  */
 function normalizeRows(rawRows, map) {
   const dated = [];
@@ -356,7 +301,7 @@ function normalizeRows(rawRows, map) {
       hour: date.getHours(),
       prodRaw: toNumber(row[map.prod]),
       consoRaw: toNumber(row[map.conso]),
-      retourRaw: toNumber(row[map.retour]),
+      retourRaw: map.retour ? toNumber(row[map.retour]) : 0,
     });
   }
   dated.sort((a, b) => a.tMs - b.tMs);
@@ -373,11 +318,7 @@ function normalizeRows(rawRows, map) {
     if (median > 0 && Number.isFinite(median)) intervalHours = median;
   }
 
-  const toKwh = (val) => {
-    if (map.unit === "kWh") return val;
-    if (map.unit === "W") return (val * intervalHours) / 1000;
-    return val / 1000; // Wh -> kWh
-  };
+  const toKwh = (val) => (ASSUMED_UNIT === "kWh" ? val : val / 1000);
 
   return dated.map((d) => ({
     t: d.tMs,
@@ -385,11 +326,13 @@ function normalizeRows(rawRows, map) {
     prod: toKwh(d.prodRaw),
     conso: toKwh(d.consoRaw),
     retour: Math.max(0, toKwh(d.retourRaw)),
+    durH: intervalHours,
   }));
 }
 
 /**
- * Simule la batterie virtuelle sur l'ensemble des points historisés, triés par temps.
+ * Simule la batterie virtuelle sur l'ensemble des points historisés, triés par temps,
+ * avec rendement aller-retour et limite de puissance de charge/décharge.
  */
 function runSimulation(points, cfg) {
   if (points.length === 0) {
@@ -399,51 +342,100 @@ function runSimulation(points, cfg) {
   const capaciteKwh = cfg.capaciteKwh;
   const socMinKwh = capaciteKwh * (cfg.socMinPct / 100);
   let soc = capaciteKwh * (cfg.socInitialPct / 100);
+  const efficacite = cfg.rendementPct / 100;
+  const puissanceMaxKw = cfg.puissanceMaxKw > 0 ? cfg.puissanceMaxKw : Infinity;
 
   const series = [];
+
+  // Synthèse "panneaux seuls" (indépendante de la batterie)
   let totalProduction = 0;
-  let totalRetourBrut = 0;
+  let totalConsoGrid = 0; // Phase A — import réseau déjà mesuré
+  let totalRetourBrut = 0; // surplus exporté / non autoconsommé
+  let totalGainPanneaux = 0;
+  let totalPerteEuros = 0;
+
+  // Simulation batterie
+  let totalStocke = 0;
   let totalCouvertParBatterie = 0;
-  let totalEconomie = 0;
+  let totalEconomieBatterie = 0;
 
   for (const p of points) {
     totalProduction += p.prod;
+    totalConsoGrid += p.conso;
     totalRetourBrut += p.retour;
 
-    const chargeable = Math.min(p.retour, Math.max(0, capaciteKwh - soc));
-    soc += chargeable;
-
-    const disponible = Math.max(0, soc - socMinKwh);
-    const dechargeable = Math.min(Math.max(0, p.conso), disponible);
-    soc -= dechargeable;
-
-    totalCouvertParBatterie += dechargeable;
-
     const tarif = isNightHour(p.hour, cfg.hcStart, cfg.hcEnd) ? cfg.tarifNuit : cfg.tarifJour;
-    totalEconomie += dechargeable * tarif;
+
+    // Autoconsommation directe de cette ligne (avant toute batterie)
+    const autoconsoDirecteLigne = Math.max(0, p.prod - p.retour);
+    totalGainPanneaux += autoconsoDirecteLigne * tarif;
+    totalPerteEuros += p.retour * tarif;
+
+    // --- Charge de la batterie, limitée par la puissance max et le rendement ---
+    const maxEnergieParIntervalle = puissanceMaxKw * p.durH;
+    const energiePreleveeSurplus = Math.min(p.retour, maxEnergieParIntervalle);
+    const placeDisponible = Math.max(0, capaciteKwh - soc);
+    const stocke = Math.min(energiePreleveeSurplus * efficacite, placeDisponible);
+    soc += stocke;
+    totalStocke += stocke;
+
+    // --- Décharge pour couvrir la consommation réseau ---
+    const maxDechargeParIntervalle = puissanceMaxKw * p.durH;
+    const disponible = Math.max(0, soc - socMinKwh);
+    const dechargeable = Math.min(p.conso, disponible, maxDechargeParIntervalle);
+    soc -= dechargeable;
+    totalCouvertParBatterie += dechargeable;
+    totalEconomieBatterie += dechargeable * tarif;
 
     series.push({
       t: new Date(p.t),
       prod: p.prod,
-      conso: p.conso,
       socPct: capaciteKwh > 0 ? (soc / capaciteKwh) * 100 : 0,
     });
   }
 
-  const autoconsoDirecte = Math.max(0, totalProduction - totalRetourBrut);
-  const autoconsoAvecBatterie = Math.min(totalProduction, autoconsoDirecte + totalCouvertParBatterie);
-  const autoconsoPct = totalProduction > 0 ? (autoconsoAvecBatterie / totalProduction) * 100 : 0;
-
   const spanMs = points[points.length - 1].t - points[0].t;
   const nbJours = Math.max(spanMs / 86400000, 1);
-  const economieAnnuelle = totalEconomie * (365 / nbJours);
-  const amortissementAnnees = economieAnnuelle > 0 ? cfg.prixBatterie / economieAnnuelle : null;
+  const facteurAnnuel = 365 / nbJours;
+
+  // Synthèse panneaux seuls
+  const consommationTotale = totalConsoGrid + Math.max(0, totalProduction - totalRetourBrut);
+  const autoconsoDirecteKwh = Math.max(0, totalProduction - totalRetourBrut);
+  const autoconsoPctSansBatterie = totalProduction > 0 ? (autoconsoDirecteKwh / totalProduction) * 100 : 0;
+  const gainPanneauxAnnuel = totalGainPanneaux * facteurAnnuel;
+  const rentabilitePanneauxAnnees = gainPanneauxAnnuel > 0 ? cfg.prixPanneaux / gainPanneauxAnnuel : null;
+
+  // Synthèse batterie
+  const autoconsoAvecBatterieKwh = Math.min(totalProduction, autoconsoDirecteKwh + totalCouvertParBatterie);
+  const autoconsoPctAvecBatterie = totalProduction > 0 ? (autoconsoAvecBatterieKwh / totalProduction) * 100 : 0;
+  const nbCyclesPeriode = capaciteKwh > 0 ? totalStocke / capaciteKwh : 0;
+  const nbCyclesParAn = nbCyclesPeriode * facteurAnnuel;
+  const dureeVieAnnees = nbCyclesParAn > 0 ? cfg.dureeVieCycles / nbCyclesParAn : null;
+  const economieBatterieAnnuelle = totalEconomieBatterie * facteurAnnuel;
+  const rentabiliteBatterieAnnees = economieBatterieAnnuelle > 0 ? cfg.prixBatterie / economieBatterieAnnuelle : null;
 
   return {
     series,
-    kpis: { totalProduction, autoconsoPct, totalEconomie, economieAnnuelle, amortissementAnnees, nbJours },
     periodStart: new Date(points[0].t),
     periodEnd: new Date(points[points.length - 1].t),
+    kpis: {
+      totalProduction,
+      consommationTotale,
+      autoconsoDirecteKwh,
+      autoconsoPctSansBatterie,
+      totalGainPanneaux,
+      rentabilitePanneauxAnnees,
+      totalRetourBrut,
+      totalPerteEuros,
+      totalStocke,
+      nbCyclesPeriode,
+      totalCouvertParBatterie,
+      totalEconomieBatterie,
+      autoconsoPctAvecBatterie,
+      dureeVieAnnees,
+      rentabiliteBatterieAnnees,
+      nbJours,
+    },
   };
 }
 
@@ -459,36 +451,50 @@ function runStoredSimulation() {
 }
 
 /* ============================================================
-   7. RENDU DES RÉSULTATS (KPIs + graphique)
+   6. RENDU DES RÉSULTATS (KPIs + graphique)
    ============================================================ */
 
 let chartInstance = null;
 
-function formatKwh(v) { return v.toLocaleString("fr-FR", { maximumFractionDigits: 1 }) + " kWh"; }
-function formatEuro(v) { return v.toLocaleString("fr-FR", { maximumFractionDigits: 2 }) + " €"; }
+function fmtKwh(v) { return v.toLocaleString("fr-FR", { maximumFractionDigits: 1 }) + " kWh"; }
+function fmtEuro(v) { return v.toLocaleString("fr-FR", { maximumFractionDigits: 2 }) + " €"; }
+function fmtPct(v) { return v.toLocaleString("fr-FR", { maximumFractionDigits: 0 }) + " %"; }
+function fmtAnnees(v) {
+  if (v == null) return "N/A";
+  if (v > 99) return "> 99 ans";
+  return v.toLocaleString("fr-FR", { maximumFractionDigits: 1 }) + " ans";
+}
 
 function renderResults(result) {
   document.getElementById("resultsEmpty").style.display = "none";
   document.getElementById("results").style.display = "block";
 
-  const { kpis, periodStart, periodEnd } = result;
+  const k = result.kpis;
 
   document.getElementById("periodLabel").textContent =
-    periodStart.toLocaleDateString("fr-FR") + " → " + periodEnd.toLocaleDateString("fr-FR");
+    result.periodStart.toLocaleDateString("fr-FR") + " → " + result.periodEnd.toLocaleDateString("fr-FR");
 
-  document.getElementById("kpiProd").textContent = formatKwh(kpis.totalProduction);
-  document.getElementById("kpiAutoconso").textContent =
-    kpis.autoconsoPct.toLocaleString("fr-FR", { maximumFractionDigits: 0 }) + " %";
-  document.getElementById("kpiEconomie").innerHTML = formatEuro(kpis.totalEconomie) + " <small>sur la période</small>";
+  // Synthèse globale
+  document.getElementById("kpiProdTotale").textContent = fmtKwh(k.totalProduction);
+  document.getElementById("kpiConsoTotale").textContent = fmtKwh(k.consommationTotale);
+  document.getElementById("kpiAutoconsoQty").textContent = fmtKwh(k.autoconsoDirecteKwh);
+  document.getElementById("kpiAutoconsoPctSansBatt").textContent = fmtPct(k.autoconsoPctSansBatterie);
+  document.getElementById("kpiGainPanneaux").textContent = fmtEuro(k.totalGainPanneaux);
+  document.getElementById("kpiRentabilitePanneaux").textContent = fmtAnnees(k.rentabilitePanneauxAnnees);
+  document.getElementById("kpiRentabilitePanneauxNote").textContent =
+    "Pour " + settings.prixPanneaux.toLocaleString("fr-FR") + " € d'installation, extrapolation annuelle";
+  document.getElementById("kpiExportTotale").textContent = fmtKwh(k.totalRetourBrut);
+  document.getElementById("kpiPerteEuros").textContent = fmtEuro(k.totalPerteEuros);
 
-  const amortEl = document.getElementById("kpiAmortissement");
-  if (kpis.amortissementAnnees == null) {
-    amortEl.textContent = "N/A";
-  } else if (kpis.amortissementAnnees > 99) {
-    amortEl.textContent = "> 99 ans";
-  } else {
-    amortEl.textContent = kpis.amortissementAnnees.toLocaleString("fr-FR", { maximumFractionDigits: 1 }) + " ans";
-  }
+  // Simulateur de batterie
+  document.getElementById("kpiQtyStockee").textContent = fmtKwh(k.totalStocke);
+  document.getElementById("kpiNbCycles").textContent =
+    k.nbCyclesPeriode.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
+  document.getElementById("kpiQtyUtiliseeBatt").textContent = fmtKwh(k.totalCouvertParBatterie);
+  document.getElementById("kpiEconomieBatt").textContent = fmtEuro(k.totalEconomieBatterie);
+  document.getElementById("kpiAutoconsoPctAvecBatt").textContent = fmtPct(k.autoconsoPctAvecBatterie);
+  document.getElementById("kpiDureeVie").textContent = fmtAnnees(k.dureeVieAnnees);
+  document.getElementById("kpiRentabiliteBatt").textContent = fmtAnnees(k.rentabiliteBatterieAnnees);
 
   renderChart(result.series);
 }
@@ -503,7 +509,6 @@ function downsample(series, maxPoints) {
     out.push({
       t: bucket[Math.floor(n / 2)].t,
       prod: bucket.reduce((s, p) => s + p.prod, 0),
-      conso: bucket.reduce((s, p) => s + p.conso, 0),
       socPct: bucket.reduce((s, p) => s + p.socPct, 0) / n,
     });
   }
@@ -524,8 +529,7 @@ function renderChart(series) {
     data: {
       labels,
       datasets: [
-        { label: "Production (kWh)", data: points.map((p) => p.prod), borderColor: "#f0a94e", backgroundColor: "#f0a94e33", borderWidth: 1.5, pointRadius: 0, tension: 0.25, yAxisID: "yEnergy" },
-        { label: "Consommation réseau (kWh)", data: points.map((p) => p.conso), borderColor: "#7c93c9", backgroundColor: "#7c93c933", borderWidth: 1.5, pointRadius: 0, tension: 0.25, yAxisID: "yEnergy" },
+        { label: "Production PV (kWh)", data: points.map((p) => p.prod), borderColor: "#f0a94e", backgroundColor: "#f0a94e33", borderWidth: 1.5, pointRadius: 0, tension: 0.25, yAxisID: "yEnergy" },
         { label: "Batterie (%)", data: points.map((p) => p.socPct), borderColor: "#4fc9a0", borderWidth: 2, pointRadius: 0, tension: 0.25, yAxisID: "ySoc" },
       ],
     },
@@ -543,7 +547,7 @@ function renderChart(series) {
 }
 
 /* ============================================================
-   8. ÉVÉNEMENTS
+   7. ÉVÉNEMENTS
    ============================================================ */
 
 document.getElementById("csvInput").addEventListener("change", (evt) => {
@@ -557,26 +561,6 @@ document.getElementById("pickFilesBtn").addEventListener("click", () => {
 document.getElementById("csvInputFiles").addEventListener("change", (evt) => {
   if (evt.target.files.length) handleSelectedFiles(evt.target.files);
   evt.target.value = "";
-});
-
-document.getElementById("runSimBtn").addEventListener("click", async () => {
-  const map = {
-    time: document.getElementById("mapTime").value,
-    conso: document.getElementById("mapConso").value,
-    prod: document.getElementById("mapProd").value,
-    retour: document.getElementById("mapRetour").value,
-    unit: document.getElementById("mapUnit").value,
-  };
-  colMap = map;
-  saveColMap(map);
-  showMappingSummary(map);
-
-  if (pendingFiles) {
-    await importFiles(pendingFiles, map);
-    pendingFiles = null;
-  } else {
-    runStoredSimulation();
-  }
 });
 
 document.getElementById("saveSettingsBtn").addEventListener("click", () => {
@@ -596,14 +580,9 @@ document.getElementById("resetSettingsBtn").addEventListener("click", () => {
 });
 
 document.getElementById("clearDataBtn").addEventListener("click", () => {
-  if (!confirm("Effacer tout l'historique importé et la correspondance des colonnes ?")) return;
+  if (!confirm("Effacer tout l'historique importé ?")) return;
   clearMasterData();
-  clearColMap();
-  colMap = null;
-  pendingFiles = null;
   updateHistoryStatus();
-  mappingSummaryCard.style.display = "none";
-  mappingCard.style.display = "none";
   document.getElementById("results").style.display = "none";
   document.getElementById("resultsEmpty").style.display = "block";
   document.getElementById("periodLabel").textContent = "Aucune donnée";
@@ -612,16 +591,12 @@ document.getElementById("clearDataBtn").addEventListener("click", () => {
 });
 
 /* ============================================================
-   9. INITIALISATION
+   8. INITIALISATION
    ============================================================ */
 
 fillSettingsForm();
 loadMasterData();
 updateHistoryStatus();
-
-if (colMap) {
-  showMappingSummary(colMap);
-}
 
 if (masterData.size > 0) {
   runStoredSimulation();

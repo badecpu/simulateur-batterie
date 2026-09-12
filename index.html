@@ -28,79 +28,95 @@
       <h2>Import Shelly EM3</h2>
       <label class="btn btn-primary" for="csvInput">Importer un dossier d'exports (CSV)</label>
       <input type="file" id="csvInput" accept=".csv,text/csv" multiple webkitdirectory>
-      <button class="btn btn-secondary" id="pickFilesBtn" style="margin-top:8px;">Ou choisir des fichiers un par un</button>
+      <button class="btn btn-secondary" id="pickFilesBtn" style="margin-top:8px;">Ou choisir des fichiers (sélection multiple)</button>
       <input type="file" id="csvInputFiles" accept=".csv,text/csv" multiple style="display:none;">
+      <p class="note" style="margin:8px 0 0;">Astuce iPhone : dans le sélecteur « Fichiers », touche d'abord <strong>Sélectionner</strong> en haut à droite, puis coche chaque CSV avant de valider — un simple appui sur un fichier n'en ouvre qu'un seul.</p>
       <div class="file-status" id="fileStatus">Aucune donnée importée pour le moment.</div>
       <div class="file-status" id="historyStatus"></div>
     </div>
 
-    <div class="card" id="mappingCard" style="display:none;">
-      <h2>Correspondance des colonnes</h2>
-      <p class="note" style="margin:-6px 0 12px;">À faire une seule fois : la position réelle de la production et de la consommation dépend du câblage de ton Shelly EM, pas d'une lettre de phase fixe.</p>
-      <div class="field">
-        <label for="mapTime">Horodatage</label>
-        <select id="mapTime"></select>
-      </div>
-      <div class="field">
-        <label for="mapConso">Consommation réseau (Linky / import)</label>
-        <select id="mapConso"></select>
-      </div>
-      <div class="field">
-        <label for="mapProd">Production solaire (PV)</label>
-        <select id="mapProd"></select>
-      </div>
-      <div class="field">
-        <label for="mapRetour">Retour / surplus exporté</label>
-        <select id="mapRetour"></select>
-      </div>
-      <div class="field">
-        <label for="mapUnit">Unité des colonnes ci-dessus</label>
-        <select id="mapUnit">
-          <option value="Wh">Wh (énergie par ligne)</option>
-          <option value="kWh">kWh (énergie par ligne)</option>
-          <option value="W">W (puissance moyenne sur l'intervalle)</option>
-        </select>
-      </div>
-      <button class="btn btn-primary" id="runSimBtn">Importer et mémoriser</button>
-    </div>
-
-    <div class="card" id="mappingSummaryCard" style="display:none;">
-      <h2>Correspondance mémorisée</h2>
-      <div class="file-status ok" id="mappingSummaryText"></div>
-      <button class="btn btn-secondary" id="editMappingBtn" style="margin-top:10px;">Modifier la correspondance</button>
-    </div>
-
     <div id="resultsEmpty" class="empty-state">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" stroke-linejoin="round"/></svg>
-      <p>Importez un export CSV Shelly EM3 pour voir la simulation de rentabilité de votre batterie.</p>
+      <p>Importez un export CSV Shelly EM3 pour voir la simulation de rentabilité.</p>
     </div>
 
     <div id="results" style="display:none;">
+
+      <h2 class="section-title">Synthèse globale (panneaux seuls)</h2>
       <div class="kpi-grid">
         <div class="kpi accent-solar">
           <div class="label">Production totale</div>
-          <div class="value" id="kpiProd">–</div>
-        </div>
-        <div class="kpi accent-battery">
-          <div class="label">Autoconsommation</div>
-          <div class="value" id="kpiAutoconso">–</div>
-        </div>
-        <div class="kpi accent-battery">
-          <div class="label">Économie générée</div>
-          <div class="value" id="kpiEconomie">–</div>
+          <div class="value" id="kpiProdTotale">–</div>
         </div>
         <div class="kpi">
-          <div class="label">Amortissement estimé</div>
-          <div class="value" id="kpiAmortissement">–</div>
-          <div class="note">Extrapolation annuelle à partir de la période importée</div>
+          <div class="label">Consommation totale</div>
+          <div class="value" id="kpiConsoTotale">–</div>
+        </div>
+        <div class="kpi accent-battery">
+          <div class="label">Qté autoconsommée</div>
+          <div class="value" id="kpiAutoconsoQty">–</div>
+        </div>
+        <div class="kpi accent-battery">
+          <div class="label">% autoconso. sans batterie</div>
+          <div class="value" id="kpiAutoconsoPctSansBatt">–</div>
+        </div>
+        <div class="kpi accent-solar">
+          <div class="label">Gain avec les panneaux</div>
+          <div class="value" id="kpiGainPanneaux">–</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Rentabilité des panneaux</div>
+          <div class="value" id="kpiRentabilitePanneaux">–</div>
+          <div class="note" id="kpiRentabilitePanneauxNote"></div>
+        </div>
+        <div class="kpi">
+          <div class="label">Export production totale</div>
+          <div class="value" id="kpiExportTotale">–</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Perte en euros totale</div>
+          <div class="value" id="kpiPerteEuros">–</div>
+          <div class="note">Valeur du surplus exporté non autoconsommé, au tarif applicable</div>
+        </div>
+      </div>
+
+      <h2 class="section-title">Simulateur de batterie</h2>
+      <div class="kpi-grid">
+        <div class="kpi accent-battery">
+          <div class="label">Qté totale stockée</div>
+          <div class="value" id="kpiQtyStockee">–</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Nb de cycles sur la période</div>
+          <div class="value" id="kpiNbCycles">–</div>
+        </div>
+        <div class="kpi accent-battery">
+          <div class="label">Qté utilisée grâce à la batterie</div>
+          <div class="value" id="kpiQtyUtiliseeBatt">–</div>
+        </div>
+        <div class="kpi accent-battery">
+          <div class="label">Économie grâce à la batterie</div>
+          <div class="value" id="kpiEconomieBatt">–</div>
+        </div>
+        <div class="kpi accent-battery">
+          <div class="label">Nouveau % d'autoconsommation</div>
+          <div class="value" id="kpiAutoconsoPctAvecBatt">–</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Durée de vie de la batterie</div>
+          <div class="value" id="kpiDureeVie">–</div>
+          <div class="note">Basée sur le nombre de cycles nominal réglé dans Paramètres</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Rentabilité de la batterie</div>
+          <div class="value" id="kpiRentabiliteBatt">–</div>
         </div>
       </div>
 
       <div class="chart-wrap">
-        <h2>Production, consommation et niveau de batterie</h2>
+        <h2>Production photovoltaïque &amp; niveau de charge de la batterie</h2>
         <div class="legend-row">
-          <span class="legend-item"><span class="swatch" style="background:var(--solar)"></span>Production</span>
-          <span class="legend-item"><span class="swatch" style="background:var(--grid)"></span>Consommation réseau</span>
+          <span class="legend-item"><span class="swatch" style="background:var(--solar)"></span>Production PV</span>
           <span class="legend-item"><span class="swatch" style="background:var(--battery)"></span>Niveau batterie (%)</span>
         </div>
         <canvas id="mainChart" height="220"></canvas>
@@ -136,6 +152,14 @@
       </div>
     </div>
 
+    <div class="card card--solar">
+      <h2>Installation photovoltaïque</h2>
+      <div class="field">
+        <label for="prixPanneaux">Prix de l'installation (€)</label>
+        <input type="number" id="prixPanneaux" step="10" min="0">
+      </div>
+    </div>
+
     <div class="card card--battery">
       <h2>Batterie</h2>
       <div class="field-row">
@@ -158,6 +182,20 @@
           <input type="number" id="socInitialPct" step="1" min="0" max="100">
         </div>
       </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="rendementPct">Rendement (aller-retour, %)</label>
+          <input type="number" id="rendementPct" step="1" min="1" max="100">
+        </div>
+        <div class="field">
+          <label for="puissanceMaxKw">Puissance max charge/décharge (kW)</label>
+          <input type="number" id="puissanceMaxKw" step="0.1" min="0">
+        </div>
+      </div>
+      <div class="field">
+        <label for="dureeVieCycles">Durée de vie nominale (cycles)</label>
+        <input type="number" id="dureeVieCycles" step="100" min="100">
+      </div>
     </div>
 
     <div class="settings-actions">
@@ -168,7 +206,7 @@
     <div class="card" style="margin-top:18px;">
       <h2>Données importées</h2>
       <div class="file-status" id="dataSummaryText">Aucune donnée en mémoire.</div>
-      <button class="btn btn-secondary" id="clearDataBtn" style="margin-top:10px;">Effacer les données et la correspondance</button>
+      <button class="btn btn-secondary" id="clearDataBtn" style="margin-top:10px;">Effacer les données importées</button>
     </div>
   </section>
 

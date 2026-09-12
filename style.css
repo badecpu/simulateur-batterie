@@ -80,6 +80,24 @@ main {
   font-weight: 600;
 }
 
+.section-title {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 600;
+  margin: 20px 4px 10px;
+}
+
+.section-title:first-of-type { margin-top: 4px; }
+
+.section-heading {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 600;
+  margin: 22px 4px 10px;
+}
+
+.section-heading--first { margin-top: 4px; }
+
 .card--solar { border-left: 3px solid var(--solar); }
 .card--grid { border-left: 3px solid var(--grid); }
 .card--battery { border-left: 3px solid var(--battery); }
