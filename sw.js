@@ -1,4 +1,4 @@
-const CACHE_NAME = "battsim-cache-v7";
+const CACHE_NAME = "battsim-cache-v8";
 
 const APP_SHELL = [
   "./",
@@ -8,7 +8,6 @@ const APP_SHELL = [
   "./manifest.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
-  "https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js",
 ];
 
 // Fichiers propres à l'app : toujours tenter le réseau en premier, pour que

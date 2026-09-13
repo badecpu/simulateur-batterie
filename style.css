@@ -274,6 +274,9 @@ canvas { max-width: 100%; }
   font-variant-numeric: tabular-nums;
 }
 
+.svg-chart { width: 100%; }
+.svg-chart svg { width: 100%; height: auto; display: block; }
+
 .empty-state {
   text-align: center;
   padding: 48px 20px;

@@ -478,7 +478,6 @@ function runStoredSimulation() {
 let dailySeries = [];   // série complète de la dernière simulation
 let dayKeys = [];       // clés "YYYY-MM-DD" triées, une par jour disponible
 let currentDayIndex = -1;
-let dailyChartInstance = null;
 
 function dayKeyOf(date) {
   const y = date.getFullYear();
@@ -513,32 +512,7 @@ function renderDailyView() {
   document.getElementById("dayPrevBtn").disabled = currentDayIndex <= 0;
   document.getElementById("dayNextBtn").disabled = currentDayIndex >= dayKeys.length - 1;
 
-  const labels = points.map((p) => String(p.t.getHours()).padStart(2, "0") + "h");
-
-  const ctx = document.getElementById("dailyChart").getContext("2d");
-  if (dailyChartInstance) dailyChartInstance.destroy();
-
-  dailyChartInstance = new Chart(ctx, {
-    type: "line",
-    data: {
-      labels,
-      datasets: [
-        { label: "Consommation totale (kWh)", data: points.map((p) => p.consoTotale), borderColor: "#7c93c9", backgroundColor: "#7c93c933", borderWidth: 1.5, pointRadius: 0, tension: 0.25, yAxisID: "yEnergy" },
-        { label: "Production PV (kWh)", data: points.map((p) => p.prod), borderColor: "#f0a94e", backgroundColor: "#f0a94e33", borderWidth: 1.5, pointRadius: 0, tension: 0.25, yAxisID: "yEnergy" },
-        { label: "Batterie (%)", data: points.map((p) => p.socPct), borderColor: "#4fc9a0", borderWidth: 2, pointRadius: 0, tension: 0.25, yAxisID: "ySoc" },
-      ],
-    },
-    options: {
-      responsive: true,
-      interaction: { mode: "index", intersect: false },
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { ticks: { color: "#93a1b0", maxTicksLimit: 8, font: { size: 10 } }, grid: { color: "#2a333f" } },
-        yEnergy: { position: "left", title: { display: true, text: "kWh", color: "#93a1b0" }, ticks: { color: "#93a1b0" }, grid: { color: "#2a333f" } },
-        ySoc: { position: "right", min: 0, max: 100, title: { display: true, text: "SOC %", color: "#93a1b0" }, ticks: { color: "#93a1b0" }, grid: { display: false } },
-      },
-    },
-  });
+  document.getElementById("dailyChart").innerHTML = buildLineChartSVG(points);
 
   // --- Stats du jour affiché ---
   const prodJour = points.reduce((s, p) => s + p.prod, 0);
@@ -555,6 +529,66 @@ function renderDailyView() {
     fmtPct(socDebut) + " → " + fmtPct(socFin);
 }
 
+/**
+ * Construit un graphique linéaire en SVG pur (sans dépendance externe) pour
+ * un jour de données : consommation totale et production PV (axe kWh gauche),
+ * niveau de batterie (axe % droite).
+ */
+function buildLineChartSVG(points) {
+  const W = 700, H = 280;
+  const padL = 42, padR = 42, padT = 14, padB = 28;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+  const n = points.length;
+
+  const maxEnergy = Math.max(0.1, ...points.map((p) => Math.max(p.consoTotale, p.prod))) * 1.15;
+
+  const xAt = (i) => padL + (n > 1 ? (i * plotW) / (n - 1) : plotW / 2);
+  const yEnergyAt = (v) => padT + plotH * (1 - v / maxEnergy);
+  const ySocAt = (v) => padT + plotH * (1 - Math.max(0, Math.min(100, v)) / 100);
+
+  const pathOf = (values, yFn) =>
+    values.map((v, i) => (i === 0 ? "M" : "L") + xAt(i).toFixed(1) + " " + yFn(v).toFixed(1)).join(" ");
+
+  const consoPath = pathOf(points.map((p) => p.consoTotale), yEnergyAt);
+  const prodPath = pathOf(points.map((p) => p.prod), yEnergyAt);
+  const socPath = pathOf(points.map((p) => p.socPct), ySocAt);
+
+  // Grille horizontale (0 / 50 / 100 % sur l'axe batterie, sert aussi de repère kWh)
+  const gridLines = [0, 25, 50, 75, 100].map((pct) => {
+    const yy = ySocAt(pct).toFixed(1);
+    return '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="#2a333f" stroke-width="1" />';
+  }).join("");
+
+  // Étiquettes d'heures (une sur trois environ pour ne pas surcharger)
+  const step = Math.max(1, Math.ceil(n / 8));
+  const xLabels = points.map((p, i) => {
+    if (i % step !== 0 && i !== n - 1) return "";
+    const hh = String(p.t.getHours()).padStart(2, "0") + "h";
+    return '<text x="' + xAt(i).toFixed(1) + '" y="' + (H - 8) + '" fill="#93a1b0" font-size="10" text-anchor="middle">' + hh + "</text>";
+  }).join("");
+
+  const yEnergyLabels = [0, maxEnergy / 2, maxEnergy].map((v) =>
+    '<text x="' + (padL - 6) + '" y="' + (yEnergyAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">' + v.toFixed(1) + "</text>"
+  ).join("");
+
+  const ySocLabels = [0, 50, 100].map((v) =>
+    '<text x="' + (W - padR + 6) + '" y="' + (ySocAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="start">' + v + "%</text>"
+  ).join("");
+
+  return (
+    '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">' +
+    gridLines +
+    xLabels +
+    yEnergyLabels +
+    ySocLabels +
+    '<path d="' + consoPath + '" fill="none" stroke="#7c93c9" stroke-width="2" />' +
+    '<path d="' + prodPath + '" fill="none" stroke="#f0a94e" stroke-width="2" />' +
+    '<path d="' + socPath + '" fill="none" stroke="#4fc9a0" stroke-width="2.5" />' +
+    "</svg>"
+  );
+}
+
 document.getElementById("dayPrevBtn").addEventListener("click", () => {
   if (currentDayIndex > 0) { currentDayIndex--; renderDailyView(); }
 });
@@ -563,10 +597,8 @@ document.getElementById("dayNextBtn").addEventListener("click", () => {
 });
 
 /* ============================================================
-   6. RENDU DES RÉSULTATS (KPIs + graphique)
+   6. RENDU DES RÉSULTATS (KPIs)
    ============================================================ */
-
-let chartInstance = null;
 
 function fmtKwh(v) { return v.toLocaleString("fr-FR", { maximumFractionDigits: 1 }) + " kWh"; }
 function fmtEuro(v) { return v.toLocaleString("fr-FR", { maximumFractionDigits: 2 }) + " €"; }
@@ -608,55 +640,7 @@ function renderResults(result) {
   document.getElementById("kpiDureeVie").textContent = fmtAnnees(k.dureeVieAnnees);
   document.getElementById("kpiRentabiliteBatt").textContent = fmtAnnees(k.rentabiliteBatterieAnnees);
 
-  renderChart(result.series);
   initDailyView(result.series);
-}
-
-function downsample(series, maxPoints) {
-  if (series.length <= maxPoints) return series;
-  const bucketSize = Math.ceil(series.length / maxPoints);
-  const out = [];
-  for (let i = 0; i < series.length; i += bucketSize) {
-    const bucket = series.slice(i, i + bucketSize);
-    const n = bucket.length;
-    out.push({
-      t: bucket[Math.floor(n / 2)].t,
-      prod: bucket.reduce((s, p) => s + p.prod, 0),
-      socPct: bucket.reduce((s, p) => s + p.socPct, 0) / n,
-    });
-  }
-  return out;
-}
-
-function renderChart(series) {
-  const points = downsample(series, 400);
-  const labels = points.map((p) =>
-    p.t.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
-  );
-
-  const ctx = document.getElementById("mainChart").getContext("2d");
-  if (chartInstance) chartInstance.destroy();
-
-  chartInstance = new Chart(ctx, {
-    type: "line",
-    data: {
-      labels,
-      datasets: [
-        { label: "Production PV (kWh)", data: points.map((p) => p.prod), borderColor: "#f0a94e", backgroundColor: "#f0a94e33", borderWidth: 1.5, pointRadius: 0, tension: 0.25, yAxisID: "yEnergy" },
-        { label: "Batterie (%)", data: points.map((p) => p.socPct), borderColor: "#4fc9a0", borderWidth: 2, pointRadius: 0, tension: 0.25, yAxisID: "ySoc" },
-      ],
-    },
-    options: {
-      responsive: true,
-      interaction: { mode: "index", intersect: false },
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { ticks: { color: "#93a1b0", maxTicksLimit: 6, font: { size: 10 } }, grid: { color: "#2a333f" } },
-        yEnergy: { position: "left", title: { display: true, text: "kWh", color: "#93a1b0" }, ticks: { color: "#93a1b0" }, grid: { color: "#2a333f" } },
-        ySoc: { position: "right", min: 0, max: 100, title: { display: true, text: "SOC %", color: "#93a1b0" }, ticks: { color: "#93a1b0" }, grid: { display: false } },
-      },
-    },
-  });
 }
 
 /* ============================================================

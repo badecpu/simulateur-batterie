@@ -114,15 +114,6 @@
       </div>
 
       <div class="chart-wrap">
-        <h2>Production photovoltaïque &amp; niveau de charge de la batterie</h2>
-        <div class="legend-row">
-          <span class="legend-item"><span class="swatch" style="background:var(--solar)"></span>Production PV</span>
-          <span class="legend-item"><span class="swatch" style="background:var(--battery)"></span>Niveau batterie (%)</span>
-        </div>
-        <canvas id="mainChart" height="220"></canvas>
-      </div>
-
-      <div class="chart-wrap">
         <h2>Vue journalière</h2>
         <div class="day-nav">
           <button id="dayPrevBtn" class="day-nav-btn" aria-label="Jour précédent">
@@ -138,7 +129,7 @@
           <span class="legend-item"><span class="swatch" style="background:var(--solar)"></span>Production PV</span>
           <span class="legend-item"><span class="swatch" style="background:var(--battery)"></span>Niveau batterie (%)</span>
         </div>
-        <canvas id="dailyChart" height="220"></canvas>
+        <div id="dailyChart" class="svg-chart"></div>
         <div class="kpi-grid" style="margin-top:14px;">
           <div class="kpi accent-solar">
             <div class="label">Production PV du jour</div>
@@ -262,7 +253,6 @@
   </button>
 </nav>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <script src="app.js" defer></script>
 </body>
 </html>
