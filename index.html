@@ -121,6 +121,25 @@
         </div>
         <canvas id="mainChart" height="220"></canvas>
       </div>
+
+      <div class="chart-wrap">
+        <h2>Vue journalière</h2>
+        <div class="day-nav">
+          <button id="dayPrevBtn" class="day-nav-btn" aria-label="Jour précédent">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <span id="dayLabel" class="day-label">–</span>
+          <button id="dayNextBtn" class="day-nav-btn" aria-label="Jour suivant">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div class="legend-row">
+          <span class="legend-item"><span class="swatch" style="background:var(--grid)"></span>Consommation totale</span>
+          <span class="legend-item"><span class="swatch" style="background:var(--solar)"></span>Production PV</span>
+          <span class="legend-item"><span class="swatch" style="background:var(--battery)"></span>Niveau batterie (%)</span>
+        </div>
+        <canvas id="dailyChart" height="220"></canvas>
+      </div>
     </div>
 
   </section>

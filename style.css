@@ -241,6 +241,39 @@ select:focus, input:focus {
 
 canvas { max-width: 100%; }
 
+.day-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 2px 6px 12px;
+}
+
+.day-nav-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.day-nav-btn svg { width: 18px; height: 18px; }
+.day-nav-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.day-nav-btn:active:not(:disabled) { opacity: 0.7; }
+
+.day-label {
+  font-size: 15px;
+  font-weight: 600;
+  min-width: 110px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .empty-state {
   text-align: center;
   padding: 48px 20px;

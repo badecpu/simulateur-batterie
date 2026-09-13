@@ -409,6 +409,7 @@ function runSimulation(points, cfg) {
     series.push({
       t: new Date(p.t),
       prod: p.prod,
+      consoTotale: p.conso + Math.max(0, p.prod - p.retour),
       socPct: capaciteKwh > 0 ? (soc / capaciteKwh) * 100 : 0,
     });
   }
@@ -470,6 +471,80 @@ function runStoredSimulation() {
 }
 
 /* ============================================================
+   6b. VUE JOURNALIÈRE — navigation < / > entre les jours
+   ============================================================ */
+
+let dailySeries = [];   // série complète de la dernière simulation
+let dayKeys = [];       // clés "YYYY-MM-DD" triées, une par jour disponible
+let currentDayIndex = -1;
+let dailyChartInstance = null;
+
+function dayKeyOf(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return y + "-" + m + "-" + d;
+}
+
+function initDailyView(series) {
+  dailySeries = series;
+  const seen = new Set();
+  dayKeys = [];
+  for (const p of series) {
+    const key = dayKeyOf(p.t);
+    if (!seen.has(key)) { seen.add(key); dayKeys.push(key); }
+  }
+  dayKeys.sort();
+  currentDayIndex = dayKeys.length - 1; // le jour le plus récent par défaut
+  renderDailyView();
+}
+
+function renderDailyView() {
+  if (dayKeys.length === 0) return;
+  const key = dayKeys[currentDayIndex];
+  const points = dailySeries.filter((p) => dayKeyOf(p.t) === key);
+
+  const [y, m, d] = key.split("-");
+  document.getElementById("dayLabel").textContent = d + "/" + m + "/" + y;
+  document.getElementById("dayPrevBtn").disabled = currentDayIndex <= 0;
+  document.getElementById("dayNextBtn").disabled = currentDayIndex >= dayKeys.length - 1;
+
+  const labels = points.map((p) => String(p.t.getHours()).padStart(2, "0") + "h");
+
+  const ctx = document.getElementById("dailyChart").getContext("2d");
+  if (dailyChartInstance) dailyChartInstance.destroy();
+
+  dailyChartInstance = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        { label: "Consommation totale (kWh)", data: points.map((p) => p.consoTotale), borderColor: "#7c93c9", backgroundColor: "#7c93c933", borderWidth: 1.5, pointRadius: 0, tension: 0.25, yAxisID: "yEnergy" },
+        { label: "Production PV (kWh)", data: points.map((p) => p.prod), borderColor: "#f0a94e", backgroundColor: "#f0a94e33", borderWidth: 1.5, pointRadius: 0, tension: 0.25, yAxisID: "yEnergy" },
+        { label: "Batterie (%)", data: points.map((p) => p.socPct), borderColor: "#4fc9a0", borderWidth: 2, pointRadius: 0, tension: 0.25, yAxisID: "ySoc" },
+      ],
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: "index", intersect: false },
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: "#93a1b0", maxTicksLimit: 8, font: { size: 10 } }, grid: { color: "#2a333f" } },
+        yEnergy: { position: "left", title: { display: true, text: "kWh", color: "#93a1b0" }, ticks: { color: "#93a1b0" }, grid: { color: "#2a333f" } },
+        ySoc: { position: "right", min: 0, max: 100, title: { display: true, text: "SOC %", color: "#93a1b0" }, ticks: { color: "#93a1b0" }, grid: { display: false } },
+      },
+    },
+  });
+}
+
+document.getElementById("dayPrevBtn").addEventListener("click", () => {
+  if (currentDayIndex > 0) { currentDayIndex--; renderDailyView(); }
+});
+document.getElementById("dayNextBtn").addEventListener("click", () => {
+  if (currentDayIndex < dayKeys.length - 1) { currentDayIndex++; renderDailyView(); }
+});
+
+/* ============================================================
    6. RENDU DES RÉSULTATS (KPIs + graphique)
    ============================================================ */
 
@@ -516,6 +591,7 @@ function renderResults(result) {
   document.getElementById("kpiRentabiliteBatt").textContent = fmtAnnees(k.rentabiliteBatterieAnnees);
 
   renderChart(result.series);
+  initDailyView(result.series);
 }
 
 function downsample(series, maxPoints) {
