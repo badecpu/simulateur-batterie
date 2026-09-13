@@ -513,6 +513,9 @@ function renderDailyView() {
   document.getElementById("dayNextBtn").disabled = currentDayIndex >= dayKeys.length - 1;
 
   document.getElementById("dailyChart").innerHTML = buildLineChartSVG(points);
+  document.getElementById("chartSettingsNote").textContent =
+    "Simulé avec : capacité " + settings.capaciteKwh.toLocaleString("fr-FR") + " kWh · SOC min " +
+    settings.socMinPct + "% · puissance max " + settings.puissanceMaxKw.toLocaleString("fr-FR") + " kW";
 
   // --- Stats du jour affiché ---
   const prodJour = points.reduce((s, p) => s + p.prod, 0);
