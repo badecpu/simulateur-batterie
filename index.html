@@ -139,6 +139,24 @@
           <span class="legend-item"><span class="swatch" style="background:var(--battery)"></span>Niveau batterie (%)</span>
         </div>
         <canvas id="dailyChart" height="220"></canvas>
+        <div class="kpi-grid" style="margin-top:14px;">
+          <div class="kpi accent-solar">
+            <div class="label">Production PV du jour</div>
+            <div class="value" id="dayKpiProd">–</div>
+          </div>
+          <div class="kpi">
+            <div class="label">Consommation totale du jour</div>
+            <div class="value" id="dayKpiConso">–</div>
+          </div>
+          <div class="kpi accent-battery">
+            <div class="label">Autoconsommation du jour</div>
+            <div class="value" id="dayKpiAutoconso">–</div>
+          </div>
+          <div class="kpi accent-battery">
+            <div class="label">Batterie (début → fin)</div>
+            <div class="value" id="dayKpiBatterie">–</div>
+          </div>
+        </div>
       </div>
     </div>
 

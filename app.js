@@ -409,6 +409,7 @@ function runSimulation(points, cfg) {
     series.push({
       t: new Date(p.t),
       prod: p.prod,
+      retour: p.retour,
       consoTotale: p.conso + Math.max(0, p.prod - p.retour),
       socPct: capaciteKwh > 0 ? (soc / capaciteKwh) * 100 : 0,
     });
@@ -500,7 +501,10 @@ function initDailyView(series) {
 }
 
 function renderDailyView() {
-  if (dayKeys.length === 0) return;
+  if (dayKeys.length === 0) {
+    document.getElementById("dayLabel").textContent = "Aucune donnée";
+    return;
+  }
   const key = dayKeys[currentDayIndex];
   const points = dailySeries.filter((p) => dayKeyOf(p.t) === key);
 
@@ -535,6 +539,20 @@ function renderDailyView() {
       },
     },
   });
+
+  // --- Stats du jour affiché ---
+  const prodJour = points.reduce((s, p) => s + p.prod, 0);
+  const consoJour = points.reduce((s, p) => s + p.consoTotale, 0);
+  const autoconsoDirecteJour = points.reduce((s, p) => s + Math.max(0, p.prod - p.retour), 0);
+  const autoconsoPctJour = prodJour > 0 ? (autoconsoDirecteJour / prodJour) * 100 : 0;
+  const socDebut = points[0].socPct;
+  const socFin = points[points.length - 1].socPct;
+
+  document.getElementById("dayKpiProd").textContent = fmtKwh(prodJour);
+  document.getElementById("dayKpiConso").textContent = fmtKwh(consoJour);
+  document.getElementById("dayKpiAutoconso").textContent = fmtPct(autoconsoPctJour);
+  document.getElementById("dayKpiBatterie").textContent =
+    fmtPct(socDebut) + " → " + fmtPct(socFin);
 }
 
 document.getElementById("dayPrevBtn").addEventListener("click", () => {
