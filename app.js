@@ -413,6 +413,7 @@ function runSimulation(points, cfg) {
       stocke,
       dech: dechargeable,
       consoTotale: p.conso + Math.max(0, p.prod - p.retour),
+      soc,
       socPct: capaciteKwh > 0 ? (soc / capaciteKwh) * 100 : 0,
     });
   }
@@ -540,36 +541,36 @@ function renderDailyView() {
 
 /**
  * Construit un graphique linéaire en SVG pur (sans dépendance externe) pour
- * un jour de données : consommation totale et production PV (axe kWh gauche),
- * niveau de batterie (axe % droite).
+ * un jour de données : consommation totale, production PV et niveau de
+ * batterie, tous exprimés en kWh sur un même axe.
  */
 function buildLineChartSVG(points) {
   const W = 700, H = 280;
-  const padL = 42, padR = 42, padT = 14, padB = 28;
+  const padL = 42, padR = 16, padT = 14, padB = 28;
   const plotW = W - padL - padR;
   const plotH = H - padT - padB;
   const n = points.length;
 
-  const maxEnergy = Math.max(0.1, ...points.map((p) => Math.max(p.consoTotale, p.prod))) * 1.15;
+  const maxEnergy = Math.max(0.1, ...points.map((p) => Math.max(p.consoTotale, p.prod, p.soc))) * 1.15;
 
   const xAt = (i) => padL + (n > 1 ? (i * plotW) / (n - 1) : plotW / 2);
-  const yEnergyAt = (v) => padT + plotH * (1 - v / maxEnergy);
-  const ySocAt = (v) => padT + plotH * (1 - Math.max(0, Math.min(100, v)) / 100);
+  const yAt = (v) => padT + plotH * (1 - v / maxEnergy);
 
-  const pathOf = (values, yFn) =>
-    values.map((v, i) => (i === 0 ? "M" : "L") + xAt(i).toFixed(1) + " " + yFn(v).toFixed(1)).join(" ");
+  const pathOf = (values) =>
+    values.map((v, i) => (i === 0 ? "M" : "L") + xAt(i).toFixed(1) + " " + yAt(v).toFixed(1)).join(" ");
 
-  const consoPath = pathOf(points.map((p) => p.consoTotale), yEnergyAt);
-  const prodPath = pathOf(points.map((p) => p.prod), yEnergyAt);
-  const socPath = pathOf(points.map((p) => p.socPct), ySocAt);
+  const consoPath = pathOf(points.map((p) => p.consoTotale));
+  const prodPath = pathOf(points.map((p) => p.prod));
+  const socPath = pathOf(points.map((p) => p.soc));
 
-  // Grille horizontale (0 / 50 / 100 % sur l'axe batterie, sert aussi de repère kWh)
-  const gridLines = [0, 25, 50, 75, 100].map((pct) => {
-    const yy = ySocAt(pct).toFixed(1);
+  // Grille horizontale (repères kWh)
+  const gridValues = [0, maxEnergy / 4, maxEnergy / 2, (3 * maxEnergy) / 4, maxEnergy];
+  const gridLines = gridValues.map((v) => {
+    const yy = yAt(v).toFixed(1);
     return '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="#2a333f" stroke-width="1" />';
   }).join("");
 
-  // Étiquettes d'heures (une sur trois environ pour ne pas surcharger)
+  // Étiquettes d'heures (une sur plusieurs pour ne pas surcharger)
   const step = Math.max(1, Math.ceil(n / 8));
   const xLabels = points.map((p, i) => {
     if (i % step !== 0 && i !== n - 1) return "";
@@ -577,20 +578,15 @@ function buildLineChartSVG(points) {
     return '<text x="' + xAt(i).toFixed(1) + '" y="' + (H - 8) + '" fill="#93a1b0" font-size="10" text-anchor="middle">' + hh + "</text>";
   }).join("");
 
-  const yEnergyLabels = [0, maxEnergy / 2, maxEnergy].map((v) =>
-    '<text x="' + (padL - 6) + '" y="' + (yEnergyAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">' + v.toFixed(1) + "</text>"
-  ).join("");
-
-  const ySocLabels = [0, 50, 100].map((v) =>
-    '<text x="' + (W - padR + 6) + '" y="' + (ySocAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="start">' + v + "%</text>"
+  const yLabels = gridValues.map((v) =>
+    '<text x="' + (padL - 6) + '" y="' + (yAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">' + v.toFixed(1) + "</text>"
   ).join("");
 
   return (
     '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">' +
     gridLines +
     xLabels +
-    yEnergyLabels +
-    ySocLabels +
+    yLabels +
     '<path d="' + consoPath + '" fill="none" stroke="#7c93c9" stroke-width="2" />' +
     '<path d="' + prodPath + '" fill="none" stroke="#f0a94e" stroke-width="2" />' +
     '<path d="' + socPath + '" fill="none" stroke="#4fc9a0" stroke-width="2.5" />' +
