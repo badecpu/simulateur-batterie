@@ -410,6 +410,8 @@ function runSimulation(points, cfg) {
       t: new Date(p.t),
       prod: p.prod,
       retour: p.retour,
+      stocke,
+      dech: dechargeable,
       consoTotale: p.conso + Math.max(0, p.prod - p.retour),
       socPct: capaciteKwh > 0 ? (soc / capaciteKwh) * 100 : 0,
     });
@@ -522,14 +524,18 @@ function renderDailyView() {
   const consoJour = points.reduce((s, p) => s + p.consoTotale, 0);
   const autoconsoDirecteJour = points.reduce((s, p) => s + Math.max(0, p.prod - p.retour), 0);
   const autoconsoPctJour = prodJour > 0 ? (autoconsoDirecteJour / prodJour) * 100 : 0;
-  const socDebut = points[0].socPct;
-  const socFin = points[points.length - 1].socPct;
+  const dechJour = points.reduce((s, p) => s + p.dech, 0);
+  const stockeJour = points.reduce((s, p) => s + p.stocke, 0);
+  const consoPVJour = autoconsoDirecteJour + dechJour;
+  const autoconsoAvecBatteriePctJour = prodJour > 0 ? Math.min(100, (consoPVJour / prodJour) * 100) : 0;
+  const nbCyclesJour = settings.capaciteKwh > 0 ? stockeJour / settings.capaciteKwh : 0;
 
   document.getElementById("dayKpiProd").textContent = fmtKwh(prodJour);
   document.getElementById("dayKpiConso").textContent = fmtKwh(consoJour);
   document.getElementById("dayKpiAutoconso").textContent = fmtPct(autoconsoPctJour);
-  document.getElementById("dayKpiBatterie").textContent =
-    fmtPct(socDebut) + " → " + fmtPct(socFin);
+  document.getElementById("dayKpiAutoconsoBatt").textContent = fmtPct(autoconsoAvecBatteriePctJour);
+  document.getElementById("dayKpiConsoPV").textContent = fmtKwh(consoPVJour);
+  document.getElementById("dayKpiCycles").textContent = nbCyclesJour.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
 }
 
 /**
