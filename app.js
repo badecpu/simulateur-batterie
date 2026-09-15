@@ -315,6 +315,56 @@ function updateHistoryStatus() {
     : n.toLocaleString("fr-FR") + " points horaires en mémoire au total.";
   historyStatusEl.textContent = text;
   document.getElementById("dataSummaryText").textContent = text;
+  updateMissingDaysDisplay();
+}
+
+function fmtDateFr(d) {
+  return String(d.getDate()).padStart(2, "0") + "/" + String(d.getMonth() + 1).padStart(2, "0") + "/" + d.getFullYear();
+}
+
+/**
+ * Repère les jours calendaires sans aucune donnée entre le premier et le
+ * dernier import, et regroupe les jours consécutifs manquants en plages.
+ */
+function computeMissingDayRanges() {
+  if (masterData.size === 0) return [];
+  const times = Array.from(masterData.keys()).sort((a, b) => a - b);
+  const presentDays = new Set(times.map((t) => dayKeyOf(new Date(t))));
+  const first = new Date(times[0]);
+  const last = new Date(times[times.length - 1]);
+  const cursor = new Date(first.getFullYear(), first.getMonth(), first.getDate());
+  const end = new Date(last.getFullYear(), last.getMonth(), last.getDate());
+
+  const missingDays = [];
+  while (cursor <= end) {
+    if (!presentDays.has(dayKeyOf(cursor))) missingDays.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  const ranges = [];
+  let rangeStart = null, prev = null;
+  for (const d of missingDays) {
+    if (rangeStart === null) { rangeStart = d; prev = d; continue; }
+    const diffDays = Math.round((d - prev) / 86400000);
+    if (diffDays === 1) { prev = d; continue; }
+    ranges.push([rangeStart, prev]);
+    rangeStart = d; prev = d;
+  }
+  if (rangeStart !== null) ranges.push([rangeStart, prev]);
+  return ranges;
+}
+
+function updateMissingDaysDisplay() {
+  const el = document.getElementById("missingDaysStatus");
+  const ranges = computeMissingDayRanges();
+  if (ranges.length === 0) {
+    el.style.display = "none";
+    el.textContent = "";
+    return;
+  }
+  const parts = ranges.map(([a, b]) => (a.getTime() === b.getTime() ? fmtDateFr(a) : fmtDateFr(a) + " → " + fmtDateFr(b)));
+  el.textContent = "Jours manquants : " + parts.join(", ");
+  el.style.display = "block";
 }
 
 /* ============================================================
@@ -418,8 +468,8 @@ function runSimulation(points, cfg) {
     });
   }
 
-  const spanMs = points[points.length - 1].t - points[0].t;
-  const nbJours = Math.max(spanMs / 86400000, 1);
+  const uniqueDays = new Set(points.map((p) => dayKeyOf(new Date(p.t))));
+  const nbJours = Math.max(uniqueDays.size, 1); // jours réellement couverts, pas l'écart calendaire (robuste aux jours manquants)
   const facteurAnnuel = 365 / nbJours;
 
   // Synthèse panneaux seuls
