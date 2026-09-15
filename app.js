@@ -21,6 +21,12 @@ const DEFAULT_SETTINGS = {
   rendementPct: 90,
   puissanceMaxKw: 3,
   dureeVieCycles: 6000,
+  poolActive: true,
+  poolPowerKw: 0.75,
+  poolStartHour: 10,
+  poolEndHour: 16,
+  poolMonthStart: 6,
+  poolMonthEnd: 9,
 };
 
 function loadSettings() {
@@ -54,6 +60,12 @@ function fillSettingsForm() {
   document.getElementById("rendementPct").value = settings.rendementPct;
   document.getElementById("puissanceMaxKw").value = settings.puissanceMaxKw;
   document.getElementById("dureeVieCycles").value = settings.dureeVieCycles;
+  document.getElementById("poolActive").checked = settings.poolActive;
+  document.getElementById("poolPowerKw").value = settings.poolPowerKw;
+  document.getElementById("poolStartHour").value = settings.poolStartHour;
+  document.getElementById("poolEndHour").value = settings.poolEndHour;
+  document.getElementById("poolMonthStart").value = settings.poolMonthStart;
+  document.getElementById("poolMonthEnd").value = settings.poolMonthEnd;
 }
 
 function readSettingsForm() {
@@ -71,6 +83,12 @@ function readSettingsForm() {
     rendementPct: clampInt(document.getElementById("rendementPct").value, 1, 100, 90),
     puissanceMaxKw: parseFloat(document.getElementById("puissanceMaxKw").value) || 0,
     dureeVieCycles: parseInt(document.getElementById("dureeVieCycles").value, 10) || 6000,
+    poolActive: document.getElementById("poolActive").checked,
+    poolPowerKw: parseFloat(document.getElementById("poolPowerKw").value) || 0,
+    poolStartHour: clampInt(document.getElementById("poolStartHour").value, 0, 23, 10),
+    poolEndHour: clampInt(document.getElementById("poolEndHour").value, 0, 23, 16),
+    poolMonthStart: clampInt(document.getElementById("poolMonthStart").value, 1, 12, 6),
+    poolMonthEnd: clampInt(document.getElementById("poolMonthEnd").value, 1, 12, 9),
   };
 }
 

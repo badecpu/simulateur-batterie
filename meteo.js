@@ -146,6 +146,21 @@ function computeTypicalConsoProfiles() {
   return { weekday: avg("weekday"), weekend: avg("weekend") };
 }
 
+/**
+ * Dérive un profil "hors saison piscine" en retirant la consommation de la
+ * pompe des heures où elle tourne habituellement. Le profil observé (issu de
+ * l'historique importé) est supposé être "en saison" par défaut.
+ */
+function buildOffSeasonProfile(profile, cfg) {
+  if (!cfg.poolActive) return profile;
+  return profile.map((v, h) => (h >= cfg.poolStartHour && h < cfg.poolEndHour ? Math.max(0, v - cfg.poolPowerKw) : v));
+}
+
+function isPoolSeasonMonth(month1to12, cfg) {
+  if (!cfg.poolActive) return false;
+  return month1to12 >= cfg.poolMonthStart && month1to12 <= cfg.poolMonthEnd;
+}
+
 /** Répartit une production journalière moyenne (kWh) sur 24h en courbe solaire (sinus), centrée à 12h30. */
 function buildPvHourlyShape(dailyKwh, daylightH) {
   const center = 12.5;
@@ -172,7 +187,12 @@ function buildPvHourlyShape(dailyKwh, daylightH) {
  * garde son état d'un mois à l'autre) à partir de la climatologie météo et des
  * profils de consommation réels, puis agrège par mois et sur l'année.
  */
-function runYearProjection(climatology, consoProfiles, cfg) {
+function runYearProjection(climatology, consoProfilesInSeason, cfg) {
+  const consoProfilesOffSeason = {
+    weekday: buildOffSeasonProfile(consoProfilesInSeason.weekday, cfg),
+    weekend: buildOffSeasonProfile(consoProfilesInSeason.weekend, cfg),
+  };
+
   const now = new Date();
   const monthsMeta = [];
   for (let m = 0; m < 12; m++) {
@@ -197,10 +217,12 @@ function runYearProjection(climatology, consoProfiles, cfg) {
     const pvShape = buildPvHourlyShape(dailyProdKwh, climMonth.avgDaylightH);
 
     const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const enSaison = isPoolSeasonMonth(month + 1, cfg);
+    const profilesDuMois = enSaison ? consoProfilesInSeason : consoProfilesOffSeason;
     for (let day = 1; day <= daysInMonth; day++) {
       const date = new Date(year, month, day);
       const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-      const consoProfile = isWeekend ? consoProfiles.weekend : consoProfiles.weekday;
+      const consoProfile = isWeekend ? profilesDuMois.weekend : profilesDuMois.weekday;
 
       for (let hour = 0; hour < 24; hour++) {
         const prod = pvShape[hour];
@@ -247,17 +269,17 @@ function runYearProjection(climatology, consoProfiles, cfg) {
    5. GRAPHIQUES SVG
    ============================================================ */
 
-function buildDualLineChartSVG(labels, seriesA, seriesB, colorA, colorB) {
+function buildCorrelationChartSVG(labels, consoKwh, prodKwh, sunshineH) {
   const W = 700, H = 280;
   const padL = 42, padR = 42, padT = 14, padB = 28;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const n = labels.length;
-  const maxA = Math.max(0.1, ...seriesA) * 1.15;
-  const maxB = Math.max(0.1, ...seriesB) * 1.15;
+  const maxKwh = Math.max(0.1, ...consoKwh, ...prodKwh) * 1.15;
+  const maxSun = Math.max(0.1, ...sunshineH) * 1.15;
 
   const xAt = (i) => padL + (n > 1 ? (i * plotW) / (n - 1) : plotW / 2);
-  const yAAt = (v) => padT + plotH * (1 - v / maxA);
-  const yBAt = (v) => padT + plotH * (1 - v / maxB);
+  const yKwhAt = (v) => padT + plotH * (1 - v / maxKwh);
+  const ySunAt = (v) => padT + plotH * (1 - v / maxSun);
   const pathOf = (values, yFn) => values.map((v, i) => (i === 0 ? "M" : "L") + xAt(i).toFixed(1) + " " + yFn(v).toFixed(1)).join(" ");
 
   const step = Math.max(1, Math.ceil(n / 8));
@@ -271,14 +293,15 @@ function buildDualLineChartSVG(labels, seriesA, seriesB, colorA, colorB) {
     return '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="#2a333f" stroke-width="1" />';
   }).join("");
 
-  const yALabels = [0, maxA / 2, maxA].map((v) => '<text x="' + (padL - 6) + '" y="' + (yAAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">' + v.toFixed(1) + "</text>").join("");
-  const yBLabels = [0, maxB / 2, maxB].map((v) => '<text x="' + (W - padR + 6) + '" y="' + (yBAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="start">' + v.toFixed(1) + "</text>").join("");
+  const yKwhLabels = [0, maxKwh / 2, maxKwh].map((v) => '<text x="' + (padL - 6) + '" y="' + (yKwhAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">' + v.toFixed(1) + "</text>").join("");
+  const ySunLabels = [0, maxSun / 2, maxSun].map((v) => '<text x="' + (W - padR + 6) + '" y="' + (ySunAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="start">' + v.toFixed(1) + "</text>").join("");
 
   return (
     '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">' +
-    gridLines + xLabels + yALabels + yBLabels +
-    '<path d="' + pathOf(seriesA, yAAt) + '" fill="none" stroke="' + colorA + '" stroke-width="2" />' +
-    '<path d="' + pathOf(seriesB, yBAt) + '" fill="none" stroke="' + colorB + '" stroke-width="2" stroke-dasharray="4 3" />' +
+    gridLines + xLabels + yKwhLabels + ySunLabels +
+    '<path d="' + pathOf(consoKwh, yKwhAt) + '" fill="none" stroke="#7c93c9" stroke-width="2" />' +
+    '<path d="' + pathOf(prodKwh, yKwhAt) + '" fill="none" stroke="#f0a94e" stroke-width="2" />' +
+    '<path d="' + pathOf(sunshineH, ySunAt) + '" fill="none" stroke="#e8c468" stroke-width="2" stroke-dasharray="4 3" />' +
     "</svg>"
   );
 }
@@ -389,21 +412,39 @@ function renderMeteoResults(weatherDays, monthlyResults, totals) {
   document.getElementById("mKpiRoiSeul").textContent = fmtAnnees(roiSeul);
   document.getElementById("mKpiRoiBatt").textContent = fmtAnnees(roiBatt);
 
-  // --- Graphique de corrélation : conso quotidienne réelle vs ensoleillement ---
+  // --- Graphique de corrélation : conso + production quotidiennes réelles vs ensoleillement ---
   const weatherByDate = new Map(weatherDays.map((d) => [d.date, d]));
-  const dayTotals = new Map(); // "YYYY-MM-DD" -> conso totale kWh
+  const dayTotals = new Map(); // "YYYY-MM-DD" -> {conso, prod} kWh
   for (const p of masterData.values()) {
     const key = dayKeyOf(new Date(p.t));
     const consoTotale = p.conso + Math.max(0, p.prod - p.retour);
-    dayTotals.set(key, (dayTotals.get(key) || 0) + consoTotale);
+    const entry = dayTotals.get(key) || { conso: 0, prod: 0 };
+    entry.conso += consoTotale;
+    entry.prod += p.prod;
+    dayTotals.set(key, entry);
   }
-  const sortedDays = Array.from(dayTotals.keys()).sort();
-  const corrLabels = sortedDays.map((d) => d.slice(8, 10) + "/" + d.slice(5, 7));
-  const corrConso = sortedDays.map((d) => dayTotals.get(d));
-  const corrSunshine = sortedDays.map((d) => (weatherByDate.get(d) ? weatherByDate.get(d).sunshineH : 0));
+  // On ne garde que les jours où la météo est réellement disponible (délai de publication ERA5).
+  const sortedDays = Array.from(dayTotals.keys()).filter((d) => weatherByDate.has(d)).sort();
+  const lastWeatherDate = weatherDays.length ? weatherDays[weatherDays.length - 1].date : null;
 
-  document.getElementById("correlationChart").innerHTML =
-    buildDualLineChartSVG(corrLabels, corrConso, corrSunshine, "#7c93c9", "#e8c468");
+  if (sortedDays.length > 0) {
+    const corrLabels = sortedDays.map((d) => d.slice(8, 10) + "/" + d.slice(5, 7));
+    const corrConso = sortedDays.map((d) => dayTotals.get(d).conso);
+    const corrProd = sortedDays.map((d) => dayTotals.get(d).prod);
+    const corrSunshine = sortedDays.map((d) => weatherByDate.get(d).sunshineH);
+    document.getElementById("correlationChart").innerHTML = buildCorrelationChartSVG(corrLabels, corrConso, corrProd, corrSunshine);
+  } else {
+    document.getElementById("correlationChart").innerHTML = "";
+  }
+
+  const omittedDays = dayTotals.size - sortedDays.length;
+  const noteEl = document.getElementById("correlationNote");
+  if (noteEl) {
+    noteEl.textContent = omittedDays > 0
+      ? "Météo disponible jusqu'au " + (lastWeatherDate ? lastWeatherDate.split("-").reverse().join("/") : "?") +
+        " (délai de publication ERA5 ~5-6 jours) — " + omittedDays + " jour(s) récent(s) pas encore affiché(s) faute de météo."
+      : "";
+  }
 
   // --- Graphique mensuel ---
   document.getElementById("monthlyChart").innerHTML = buildMonthlyBarChartSVG(monthlyResults);

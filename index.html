@@ -215,12 +215,14 @@
       </div>
 
       <div class="chart-wrap">
-        <h2>Historique croisé : consommation vs ensoleillement</h2>
+        <h2>Historique croisé : consommation, production vs ensoleillement</h2>
         <div class="legend-row">
-          <span class="legend-item"><span class="swatch" style="background:var(--grid)"></span>Consommation quotidienne (kWh)</span>
-          <span class="legend-item"><span class="swatch" style="background:#e8c468"></span>Ensoleillement (heures/jour)</span>
+          <span class="legend-item"><span class="swatch" style="background:var(--grid)"></span>Consommation (kWh)</span>
+          <span class="legend-item"><span class="swatch" style="background:var(--solar)"></span>Production PV (kWh)</span>
+          <span class="legend-item"><span class="swatch" style="background:#e8c468"></span>Ensoleillement (h/jour)</span>
         </div>
         <div id="correlationChart" class="svg-chart"></div>
+        <div class="note" id="correlationNote" style="text-align:center; margin-top:6px;"></div>
       </div>
 
       <div class="chart-wrap">
@@ -325,6 +327,39 @@
     <div class="settings-actions">
       <button class="btn btn-primary" id="saveSettingsBtn">Enregistrer</button>
       <button class="btn btn-secondary" id="resetSettingsBtn">Réinitialiser</button>
+    </div>
+
+    <div class="card" style="margin-top:18px;">
+      <h2>Piscine (pour la projection saisonnière)</h2>
+      <p class="note" style="margin:-6px 0 12px;">Ton historique importé inclut le fonctionnement de la pompe — ces réglages permettent à la projection 1 an de ne pas l'appliquer aux mois hors saison.</p>
+      <div class="field" style="display:flex; align-items:center; gap:10px;">
+        <input type="checkbox" id="poolActive" style="width:auto;">
+        <label for="poolActive" style="margin:0;">J'ai une piscine avec pompe pilotée en journée</label>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="poolPowerKw">Puissance pompe (kW)</label>
+          <input type="number" id="poolPowerKw" step="0.05" min="0">
+        </div>
+        <div class="field">
+          <label for="poolMonthStart">Mois de début saison</label>
+          <input type="number" id="poolMonthStart" step="1" min="1" max="12">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="poolStartHour">Heure de début</label>
+          <input type="number" id="poolStartHour" step="1" min="0" max="23">
+        </div>
+        <div class="field">
+          <label for="poolEndHour">Heure de fin</label>
+          <input type="number" id="poolEndHour" step="1" min="0" max="23">
+        </div>
+      </div>
+      <div class="field">
+        <label for="poolMonthEnd">Mois de fin saison</label>
+        <input type="number" id="poolMonthEnd" step="1" min="1" max="12">
+      </div>
     </div>
 
     <div class="card" style="margin-top:18px;">
