@@ -13,6 +13,7 @@ const DEFAULT_SETTINGS = {
   hcStart: 22,
   hcEnd: 6,
   prixPanneaux: 1200,
+  puissanceKwc: 2,
   capaciteKwh: 5,
   prixBatterie: 4000,
   socMinPct: 10,
@@ -45,6 +46,7 @@ function fillSettingsForm() {
   document.getElementById("hcStart").value = settings.hcStart;
   document.getElementById("hcEnd").value = settings.hcEnd;
   document.getElementById("prixPanneaux").value = settings.prixPanneaux;
+  document.getElementById("puissanceKwc").value = settings.puissanceKwc;
   document.getElementById("capaciteKwh").value = settings.capaciteKwh;
   document.getElementById("prixBatterie").value = settings.prixBatterie;
   document.getElementById("socMinPct").value = settings.socMinPct;
@@ -61,6 +63,7 @@ function readSettingsForm() {
     hcStart: clampInt(document.getElementById("hcStart").value, 0, 23, 22),
     hcEnd: clampInt(document.getElementById("hcEnd").value, 0, 23, 6),
     prixPanneaux: parseFloat(document.getElementById("prixPanneaux").value) || 0,
+    puissanceKwc: parseFloat(document.getElementById("puissanceKwc").value) || 0.1,
     capaciteKwh: parseFloat(document.getElementById("capaciteKwh").value) || 0.1,
     prixBatterie: parseFloat(document.getElementById("prixBatterie").value) || 0,
     socMinPct: clampInt(document.getElementById("socMinPct").value, 0, 90, 10),

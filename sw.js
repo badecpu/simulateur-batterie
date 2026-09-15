@@ -1,10 +1,11 @@
-const CACHE_NAME = "battsim-cache-v12";
+const CACHE_NAME = "battsim-cache-v13";
 
 const APP_SHELL = [
   "./",
   "./index.html",
   "./style.css",
   "./app.js",
+  "./meteo.js",
   "./manifest.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
@@ -13,7 +14,7 @@ const APP_SHELL = [
 // Fichiers propres à l'app : toujours tenter le réseau en premier, pour que
 // les mises à jour soient visibles immédiatement (plus besoin de rouvrir
 // l'app deux fois). Le cache ne sert que de secours hors-ligne.
-const NETWORK_FIRST_PATTERNS = [/index\.html$/, /app\.js$/, /style\.css$/, /manifest\.json$/, /\/$/];
+const NETWORK_FIRST_PATTERNS = [/index\.html$/, /app\.js$/, /meteo\.js$/, /style\.css$/, /manifest\.json$/, /\/$/];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -37,6 +38,12 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+
+  if (event.request.url.includes("archive-api.open-meteo.com")) {
+    // Le cache applicatif (IndexedDB) gère déjà cette source ; pas de double cache ici.
+    event.respondWith(fetch(event.request));
+    return;
+  }
 
   const isAppFile = NETWORK_FIRST_PATTERNS.some((re) => re.test(event.request.url));
 

@@ -163,6 +163,86 @@
 
   </section>
 
+  <!-- ================= MÉTÉO & PROJECTION 1 AN ================= -->
+  <section class="view" id="view-meteo">
+
+    <div class="card">
+      <h2>Analyse météo &amp; projection 1 an</h2>
+      <p class="note" style="margin:-6px 0 12px;">
+        Croise ton historique Shelly avec l'ensoleillement passé de Gerzat (API Open-Meteo, gratuite) pour projeter production, autoconsommation et rentabilité sur 12 mois glissants.
+      </p>
+      <button class="btn btn-primary" id="loadMeteoBtn">Charger les données météo</button>
+      <div class="file-status" id="meteoStatus">Aucune donnée météo chargée.</div>
+    </div>
+
+    <div id="meteoEmpty" class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.3-2A5 5 0 0 0 6 18" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <p>Importe d'abord ton historique Shelly dans le Tableau de bord, puis charge la météo ici pour lancer la projection.</p>
+    </div>
+
+    <div id="meteoResults" style="display:none;">
+
+      <h2 class="section-title">Projection sur 12 mois glissants</h2>
+      <div class="kpi-grid">
+        <div class="kpi accent-solar">
+          <div class="label">Production projetée (1 an)</div>
+          <div class="value" id="mKpiProdAn">–</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Autoconsommation PV seul</div>
+          <div class="value" id="mKpiAutoconsoSeul">–</div>
+        </div>
+        <div class="kpi accent-battery">
+          <div class="label">Autoconsommation PV + batterie</div>
+          <div class="value" id="mKpiAutoconsoBatt">–</div>
+        </div>
+        <div class="kpi accent-solar">
+          <div class="label">Gains annuels (PV seul)</div>
+          <div class="value" id="mKpiGainsSeul">–</div>
+        </div>
+        <div class="kpi accent-battery">
+          <div class="label">Gains annuels (PV + batterie)</div>
+          <div class="value" id="mKpiGainsBatt">–</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Amortissement PV seul</div>
+          <div class="value" id="mKpiRoiSeul">–</div>
+        </div>
+        <div class="kpi accent-battery">
+          <div class="label">Amortissement PV + batterie</div>
+          <div class="value" id="mKpiRoiBatt">–</div>
+        </div>
+      </div>
+
+      <div class="chart-wrap">
+        <h2>Historique croisé : consommation vs ensoleillement</h2>
+        <div class="legend-row">
+          <span class="legend-item"><span class="swatch" style="background:var(--grid)"></span>Consommation quotidienne (kWh)</span>
+          <span class="legend-item"><span class="swatch" style="background:#e8c468"></span>Ensoleillement (heures/jour)</span>
+        </div>
+        <div id="correlationChart" class="svg-chart"></div>
+      </div>
+
+      <div class="chart-wrap">
+        <h2>Projection mensuelle (12 mois)</h2>
+        <div class="legend-row">
+          <span class="legend-item"><span class="swatch" style="background:var(--solar)"></span>Production</span>
+          <span class="legend-item"><span class="swatch" style="background:var(--grid)"></span>Consommation</span>
+          <span class="legend-item"><span class="swatch" style="background:var(--battery)"></span>Autoconsommée (avec batterie)</span>
+        </div>
+        <div id="monthlyChart" class="svg-chart"></div>
+      </div>
+
+      <div class="card">
+        <h2>Hypothèses de la projection</h2>
+        <p class="note" style="margin:0;">
+          Production estimée à partir de l'irradiance mensuelle moyenne des 12 derniers mois à Gerzat (ratio de performance 80%). Les profils horaires de consommation sont ceux réellement observés dans ton historique importé (moyenne jour de semaine / week-end), répartis selon le calendrier réel de chaque mois à venir. Ceci reste une estimation, pas une garantie — la météo réelle variera d'une année à l'autre.
+        </p>
+      </div>
+    </div>
+
+  </section>
+
   <!-- ================= SETTINGS ================= -->
   <section class="view" id="view-settings">
 
@@ -192,9 +272,15 @@
 
     <div class="card card--solar">
       <h2>Installation photovoltaïque</h2>
-      <div class="field">
-        <label for="prixPanneaux">Prix de l'installation (€)</label>
-        <input type="number" id="prixPanneaux" step="10" min="0">
+      <div class="field-row">
+        <div class="field">
+          <label for="prixPanneaux">Prix de l'installation (€)</label>
+          <input type="number" id="prixPanneaux" step="10" min="0">
+        </div>
+        <div class="field">
+          <label for="puissanceKwc">Puissance installée (kWc)</label>
+          <input type="number" id="puissanceKwc" step="0.1" min="0.1">
+        </div>
       </div>
     </div>
 
@@ -253,9 +339,13 @@
 <div class="save-toast" id="saveToast">Paramètres enregistrés</div>
 
 <nav class="tabbar">
-  <button class="active" data-view="dashboard">
+  <button data-view="dashboard" class="active">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V10M12 19V5M20 19v-7" stroke-linecap="round"/></svg>
     Tableau de bord
+  </button>
+  <button data-view="meteo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.3-2A5 5 0 0 0 6 18" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Météo &amp; 1 an
   </button>
   <button data-view="settings">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.04 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.96 19.3a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.04H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.7 8.96a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9.1A1.7 1.7 0 0 0 10.14 3H10.09A2 2 0 1 1 14.09 3h-.05a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.05A1.7 1.7 0 0 0 21 10.14V10.09a2 2 0 1 1 0 3.91h-.05a1.7 1.7 0 0 0-1.55 1z"/></svg>
@@ -264,5 +354,6 @@
 </nav>
 
 <script src="app.js" defer></script>
+<script src="meteo.js" defer></script>
 </body>
 </html>
