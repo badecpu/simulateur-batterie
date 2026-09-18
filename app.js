@@ -717,6 +717,67 @@ function renderResults(result) {
   document.getElementById("kpiRentabiliteBatt").textContent = fmtAnnees(k.rentabiliteBatterieAnnees);
 
   initDailyView(result.series);
+
+  const dailyAutoconso = computeDailyAutoconsoSeries(result.series);
+  document.getElementById("autoconsoEvolutionChart").innerHTML = buildAutoconsoEvolutionSVG(dailyAutoconso);
+}
+
+/**
+ * Regroupe la série horaire par jour pour obtenir le taux d'autoconsommation
+ * quotidien, sans puis avec batterie, sur toute la période chargée.
+ */
+function computeDailyAutoconsoSeries(series) {
+  const byDay = new Map();
+  for (const p of series) {
+    const key = dayKeyOf(p.t);
+    if (!byDay.has(key)) byDay.set(key, { t: p.t, prod: 0, autoDirecte: 0, dech: 0 });
+    const e = byDay.get(key);
+    e.prod += p.prod;
+    e.autoDirecte += Math.max(0, p.prod - p.retour);
+    e.dech += p.dech;
+  }
+  const days = Array.from(byDay.values()).sort((a, b) => a.t - b.t);
+  return days.map((d) => ({
+    t: d.t,
+    pctSansBatt: d.prod > 0 ? (d.autoDirecte / d.prod) * 100 : 0,
+    pctAvecBatt: d.prod > 0 ? Math.min(100, ((d.autoDirecte + d.dech) / d.prod) * 100) : 0,
+  }));
+}
+
+/** Graphique SVG natif : deux courbes de % (0-100), une par jour de la période. */
+function buildAutoconsoEvolutionSVG(days) {
+  const W = 700, H = 260;
+  const padL = 36, padR = 16, padT = 14, padB = 28;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const n = days.length;
+
+  const xAt = (i) => padL + (n > 1 ? (i * plotW) / (n - 1) : plotW / 2);
+  const yAt = (v) => padT + plotH * (1 - Math.max(0, Math.min(100, v)) / 100);
+  const pathOf = (vals) => vals.map((v, i) => (i === 0 ? "M" : "L") + xAt(i).toFixed(1) + " " + yAt(v).toFixed(1)).join(" ");
+
+  const gridLines = [0, 25, 50, 75, 100].map((v) => {
+    const yy = yAt(v).toFixed(1);
+    return '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="#2a333f" stroke-width="1" />';
+  }).join("");
+  const yLabels = [0, 50, 100].map((v) =>
+    '<text x="' + (padL - 6) + '" y="' + (yAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">' + v + "%</text>"
+  ).join("");
+
+  const step = Math.max(1, Math.ceil(n / 8));
+  const xLabels = days.map((d, i) => {
+    if (i % step !== 0 && i !== n - 1) return "";
+    const dt = new Date(d.t);
+    const lab = String(dt.getDate()).padStart(2, "0") + "/" + String(dt.getMonth() + 1).padStart(2, "0");
+    return '<text x="' + xAt(i).toFixed(1) + '" y="' + (H - 8) + '" fill="#93a1b0" font-size="10" text-anchor="middle">' + lab + "</text>";
+  }).join("");
+
+  return (
+    '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">' +
+    gridLines + xLabels + yLabels +
+    '<path d="' + pathOf(days.map((d) => d.pctSansBatt)) + '" fill="none" stroke="#7c93c9" stroke-width="2" />' +
+    '<path d="' + pathOf(days.map((d) => d.pctAvecBatt)) + '" fill="none" stroke="#4fc9a0" stroke-width="2.5" />' +
+    "</svg>"
+  );
 }
 
 /* ============================================================
