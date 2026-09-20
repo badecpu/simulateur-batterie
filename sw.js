@@ -1,4 +1,4 @@
-const CACHE_NAME = "battsim-cache-v16";
+const CACHE_NAME = "battsim-cache-v17";
 
 const APP_SHELL = [
   "./",
@@ -48,9 +48,11 @@ self.addEventListener("fetch", (event) => {
   const isAppFile = NETWORK_FIRST_PATTERNS.some((re) => re.test(event.request.url));
 
   if (isAppFile) {
-    // Réseau d'abord : la mise à jour est visible dès le premier chargement.
+    // Réseau d'abord, en forçant l'ignorance du cache HTTP natif du navigateur
+    // (cache: "no-store") — un simple fetch() peut sinon renvoyer une réponse
+    // mise en cache localement même en dehors du Service Worker.
     event.respondWith(
-      fetch(event.request)
+      fetch(event.request, { cache: "no-store" })
         .then((response) => {
           if (response && response.status === 200) {
             const clone = response.clone();
