@@ -730,9 +730,10 @@ function computeDailyAutoconsoSeries(series) {
   const byDay = new Map();
   for (const p of series) {
     const key = dayKeyOf(p.t);
-    if (!byDay.has(key)) byDay.set(key, { t: p.t, prod: 0, autoDirecte: 0, dech: 0 });
+    if (!byDay.has(key)) byDay.set(key, { t: p.t, prod: 0, conso: 0, autoDirecte: 0, dech: 0 });
     const e = byDay.get(key);
     e.prod += p.prod;
+    e.conso += p.consoTotale;
     e.autoDirecte += Math.max(0, p.prod - p.retour);
     e.dech += p.dech;
   }
@@ -741,6 +742,7 @@ function computeDailyAutoconsoSeries(series) {
     t: d.t,
     pctSansBatt: d.prod > 0 ? (d.autoDirecte / d.prod) * 100 : 0,
     pctAvecBatt: d.prod > 0 ? Math.min(100, ((d.autoDirecte + d.dech) / d.prod) * 100) : 0,
+    pctAutoproduction: d.conso > 0 ? Math.min(100, ((d.autoDirecte + d.dech) / d.conso) * 100) : 0,
   }));
 }
 
@@ -776,6 +778,7 @@ function buildAutoconsoEvolutionSVG(days) {
     gridLines + xLabels + yLabels +
     '<path d="' + pathOf(days.map((d) => d.pctSansBatt)) + '" fill="none" stroke="#7c93c9" stroke-width="2" />' +
     '<path d="' + pathOf(days.map((d) => d.pctAvecBatt)) + '" fill="none" stroke="#4fc9a0" stroke-width="2.5" />' +
+    '<path d="' + pathOf(days.map((d) => d.pctAutoproduction)) + '" fill="none" stroke="#f0a94e" stroke-width="2" stroke-dasharray="4 3" />' +
     "</svg>"
   );
 }
