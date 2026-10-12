@@ -716,6 +716,13 @@ function renderResults(result) {
   document.getElementById("kpiDureeVie").textContent = fmtAnnees(k.dureeVieAnnees);
   document.getElementById("kpiRentabiliteBatt").textContent = fmtAnnees(k.rentabiliteBatterieAnnees);
 
+  // Coût par kWh cyclé = prix d'achat ÷ (capacité × nombre de cycles nominal)
+  const energieCycleeVie = settings.capaciteKwh * settings.dureeVieCycles;
+  document.getElementById("kpiCoutKwhCycle").textContent =
+    energieCycleeVie > 0
+      ? (settings.prixBatterie / energieCycleeVie).toLocaleString("fr-FR", { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + " €/kWh"
+      : "N/A";
+
   initDailyView(result.series);
 
   const dailyAutoconso = computeDailyAutoconsoSeries(result.series);

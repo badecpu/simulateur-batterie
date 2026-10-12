@@ -112,6 +112,11 @@
           <div class="label">Rentabilité de la batterie</div>
           <div class="value" id="kpiRentabiliteBatt">–</div>
         </div>
+        <div class="kpi">
+          <div class="label">Coût par kWh cyclé</div>
+          <div class="value" id="kpiCoutKwhCycle">–</div>
+          <div class="note">Prix ÷ (capacité × cycles nominal) — à comparer au tarif du kWh acheté</div>
+        </div>
       </div>
 
       <div class="chart-wrap">
@@ -250,7 +255,7 @@
       <div class="card">
         <h2>Hypothèses de la projection</h2>
         <p class="note" style="margin:0;">
-          Production estimée à partir de l'irradiance mensuelle moyenne des 12 derniers mois à Gerzat (ratio de performance 80%). Les profils horaires de consommation sont ceux réellement observés dans ton historique importé (moyenne jour de semaine / week-end), répartis selon le calendrier réel de chaque mois à venir. Ceci reste une estimation, pas une garantie — la météo réelle variera d'une année à l'autre.
+          Production estimée à partir de l'irradiance mensuelle moyenne des 12 derniers mois à Gerzat (ratio de performance 80%) — aucune donnée de production/injection réelle n'a été fournie, cette partie reste une simulation. Le total de consommation de chaque mois est calibré sur tes vraies moyennes Enedis (plusieurs années, si disponibles) ; la répartition heure par heure dans la journée reprend la forme observée dans ton historique Shelly importé (semaine/week-end, saison piscine). Ceci reste une estimation, pas une garantie — la météo réelle variera d'une année à l'autre.
         </p>
       </div>
     </div>

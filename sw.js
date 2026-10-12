@@ -1,4 +1,4 @@
-const CACHE_NAME = "battsim-cache-v17";
+const CACHE_NAME = "battsim-cache-v19";
 
 const APP_SHELL = [
   "./",
@@ -6,6 +6,7 @@ const APP_SHELL = [
   "./style.css",
   "./app.js",
   "./meteo.js",
+  "./enedis-conso.json",
   "./manifest.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
@@ -14,7 +15,7 @@ const APP_SHELL = [
 // Fichiers propres à l'app : toujours tenter le réseau en premier, pour que
 // les mises à jour soient visibles immédiatement (plus besoin de rouvrir
 // l'app deux fois). Le cache ne sert que de secours hors-ligne.
-const NETWORK_FIRST_PATTERNS = [/index\.html$/, /app\.js$/, /meteo\.js$/, /style\.css$/, /manifest\.json$/, /\/$/];
+const NETWORK_FIRST_PATTERNS = [/index\.html$/, /app\.js$/, /meteo\.js$/, /style\.css$/, /manifest\.json$/, /enedis-conso\.json$/, /\/$/];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

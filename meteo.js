@@ -179,6 +179,53 @@ function buildPvHourlyShape(dailyKwh, daylightH) {
 }
 
 /* ============================================================
+   3b. DONNÉES RÉELLES ENEDIS (consommation quotidienne, plusieurs années)
+   ============================================================ */
+
+let enedisDailyCache = null;
+
+/**
+ * Charge enedis-conso.json (export Linky réel, consommation quotidienne en kWh),
+ * préparé à l'avance à partir des fichiers fournis par l'utilisateur.
+ * Retourne null si le fichier est absent (l'app reste fonctionnelle sans).
+ */
+async function fetchEnedisData() {
+  if (enedisDailyCache) return enedisDailyCache;
+  try {
+    const response = await fetch("enedis-conso.json", { cache: "no-store" });
+    if (!response.ok) return null;
+    const data = await response.json();
+    enedisDailyCache = Array.isArray(data) ? data : null;
+    return enedisDailyCache;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Moyenne, par mois calendaire (1-12), de la consommation quotidienne réelle Enedis (kWh/jour). */
+function computeEnedisMonthlyClimatology(enedisDaily) {
+  const buckets = {};
+  for (const d of enedisDaily) {
+    const month = Number(d.date.slice(5, 7));
+    if (!buckets[month]) buckets[month] = { sum: 0, n: 0 };
+    buckets[month].sum += d.kwh;
+    buckets[month].n++;
+  }
+  const clim = {};
+  for (let m = 1; m <= 12; m++) {
+    clim[m] = buckets[m] && buckets[m].n > 0 ? buckets[m].sum / buckets[m].n : null;
+  }
+  return clim;
+}
+
+/** Normalise un profil horaire pour qu'il somme à 1 (conserve sa forme, pas son total). */
+function normalizeShape(profile) {
+  const sum = profile.reduce((s, v) => s + v, 0);
+  if (sum <= 0) return profile.map(() => 1 / 24);
+  return profile.map((v) => v / sum);
+}
+
+/* ============================================================
    4. MOTEUR DE PROJECTION SUR 12 MOIS GLISSANTS
    ============================================================ */
 
@@ -187,11 +234,13 @@ function buildPvHourlyShape(dailyKwh, daylightH) {
  * garde son état d'un mois à l'autre) à partir de la climatologie météo et des
  * profils de consommation réels, puis agrège par mois et sur l'année.
  */
-function runYearProjection(climatology, consoProfilesInSeason, cfg) {
+function runYearProjection(climatology, consoProfilesInSeason, cfg, enedisMonthlyClim) {
   const consoProfilesOffSeason = {
     weekday: buildOffSeasonProfile(consoProfilesInSeason.weekday, cfg),
     weekend: buildOffSeasonProfile(consoProfilesInSeason.weekend, cfg),
   };
+  const shapesInSeason = { weekday: normalizeShape(consoProfilesInSeason.weekday), weekend: normalizeShape(consoProfilesInSeason.weekend) };
+  const shapesOffSeason = { weekday: normalizeShape(consoProfilesOffSeason.weekday), weekend: normalizeShape(consoProfilesOffSeason.weekend) };
 
   const now = new Date();
   const monthsMeta = [];
@@ -218,15 +267,23 @@ function runYearProjection(climatology, consoProfilesInSeason, cfg) {
 
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const enSaison = isPoolSeasonMonth(month + 1, cfg);
+    const shapesDuMois = enSaison ? shapesInSeason : shapesOffSeason;
     const profilesDuMois = enSaison ? consoProfilesInSeason : consoProfilesOffSeason;
+
+    // Total journalier calibré sur la vraie moyenne Enedis du mois si disponible,
+    // sinon repli sur le total du profil horaire observé (Shelly).
+    const enedisAvg = enedisMonthlyClim ? enedisMonthlyClim[month + 1] : null;
+    const fallbackDailyKwh = { weekday: profilesDuMois.weekday.reduce((s, v) => s + v, 0), weekend: profilesDuMois.weekend.reduce((s, v) => s + v, 0) };
+
     for (let day = 1; day <= daysInMonth; day++) {
       const date = new Date(year, month, day);
       const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-      const consoProfile = isWeekend ? profilesDuMois.weekend : profilesDuMois.weekday;
+      const shape = isWeekend ? shapesDuMois.weekend : shapesDuMois.weekday;
+      const targetDailyKwh = enedisAvg != null ? enedisAvg : (isWeekend ? fallbackDailyKwh.weekend : fallbackDailyKwh.weekday);
 
       for (let hour = 0; hour < 24; hour++) {
         const prod = pvShape[hour];
-        const conso = consoProfile[hour];
+        const conso = shape[hour] * targetDailyKwh;
         const surplus = Math.max(0, prod - conso);
         const deficit = Math.max(0, conso - prod);
         const directAutoconso = Math.min(prod, conso);
@@ -378,13 +435,17 @@ async function loadMeteoAndProject() {
     const weatherDays = await fetchWeatherRange(startDate, endDate);
     if (weatherDays.length === 0) throw new Error("Aucune donnée météo retournée pour cette période.");
 
+    const enedisDaily = await fetchEnedisData();
+    const enedisClim = enedisDaily ? computeEnedisMonthlyClimatology(enedisDaily) : null;
+
     const climatology = computeMonthlyClimatology(weatherDays);
     const consoProfiles = computeTypicalConsoProfiles();
-    const { monthlyResults, totals } = runYearProjection(climatology, consoProfiles, settings);
+    const { monthlyResults, totals } = runYearProjection(climatology, consoProfiles, settings, enedisClim);
 
     renderMeteoResults(weatherDays, monthlyResults, totals);
 
-    meteoStatusEl.textContent = weatherDays.length.toLocaleString("fr-FR") + " jours météo chargés (Gerzat, Open-Meteo).";
+    meteoStatusEl.textContent = weatherDays.length.toLocaleString("fr-FR") + " jours météo chargés (Gerzat, Open-Meteo)" +
+      (enedisDaily ? " · conso calibrée sur " + enedisDaily.length.toLocaleString("fr-FR") + " jours réels Enedis." : ".");
     meteoStatusEl.className = "file-status ok";
   } catch (err) {
     console.error(err);
