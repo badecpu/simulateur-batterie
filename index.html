@@ -132,6 +132,16 @@
       </div>
 
       <div class="chart-wrap">
+        <h2>Historique mensuel réel</h2>
+        <div class="legend-row">
+          <span class="legend-item"><span class="swatch" style="background:var(--solar)"></span>Production</span>
+          <span class="legend-item"><span class="swatch" style="background:var(--grid)"></span>Conso. sans batterie</span>
+          <span class="legend-item"><span class="swatch" style="background:var(--battery)"></span>Conso. avec batterie</span>
+        </div>
+        <div id="monthlyHistoryChart" class="svg-chart"></div>
+      </div>
+
+      <div class="chart-wrap">
         <h2>Vue journalière</h2>
         <div class="day-nav">
           <button id="dayPrevBtn" class="day-nav-btn" aria-label="Jour précédent">
@@ -258,6 +268,123 @@
           Production estimée à partir de l'irradiance mensuelle moyenne des 12 derniers mois à Gerzat (ratio de performance 80%) — aucune donnée de production/injection réelle n'a été fournie, cette partie reste une simulation. Le total de consommation de chaque mois est calibré sur tes vraies moyennes Enedis (plusieurs années, si disponibles) ; la répartition heure par heure dans la journée reprend la forme observée dans ton historique Shelly importé (semaine/week-end, saison piscine). Ceci reste une estimation, pas une garantie — la météo réelle variera d'une année à l'autre.
         </p>
       </div>
+    </div>
+
+  </section>
+
+  <!-- ================= BALLON D'EAU CHAUDE (ECS) ================= -->
+  <section class="view" id="view-ballon">
+
+    <div class="card card--battery">
+      <h2>Ballon d'eau chaude piloté</h2>
+      <p class="note" style="margin:-6px 0 12px;">
+        Simule un routeur solaire qui dévie le surplus PV restant (après la batterie, si tu en as une) vers la résistance du ballon, plutôt que de l'exporter. Calculé sur ton historique importé.
+      </p>
+      <div class="field-row">
+        <div class="field">
+          <label for="ballonVolumeL">Volume du ballon (L)</label>
+          <input type="number" id="ballonVolumeL" step="10" min="0">
+        </div>
+        <div class="field">
+          <label for="ballonPuissanceKw">Puissance résistance (kW)</label>
+          <input type="number" id="ballonPuissanceKw" step="0.1" min="0">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="ballonBesoinKwhJour">Besoin ECS quotidien (kWh)</label>
+          <input type="number" id="ballonBesoinKwhJour" step="0.5" min="0">
+        </div>
+        <div class="field">
+          <label for="ballonPrix">Investissement routeur (€)</label>
+          <input type="number" id="ballonPrix" step="10" min="0">
+        </div>
+      </div>
+      <button class="btn btn-primary" id="saveBallonBtn">Enregistrer &amp; recalculer</button>
+    </div>
+
+    <div id="ballonEmpty" class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v6m0 0 3-3m-3 3L9 5M5 12a7 7 0 1 0 14 0" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <p>Importe ton historique Shelly dans le Tableau de bord pour simuler le ballon ECS.</p>
+    </div>
+
+    <div id="ballonResults" style="display:none;">
+      <div class="kpi-grid">
+        <div class="kpi accent-solar">
+          <div class="label">Énergie déviée vers le ballon</div>
+          <div class="value" id="ballonKpiDiverti">–</div>
+        </div>
+        <div class="kpi accent-battery">
+          <div class="label">% des besoins ECS couverts</div>
+          <div class="value" id="ballonKpiPctCouvert">–</div>
+        </div>
+        <div class="kpi accent-solar">
+          <div class="label">Économie sur la période</div>
+          <div class="value" id="ballonKpiEconomie">–</div>
+        </div>
+        <div class="kpi accent-battery">
+          <div class="label">Économie annuelle projetée</div>
+          <div class="value" id="ballonKpiEconomieAnnuelle">–</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Rentabilité du routeur solaire</div>
+          <div class="value" id="ballonKpiRoi">–</div>
+          <div class="note">Investissement du routeur seul ÷ économie annuelle qu'il apporte</div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Hypothèse</h2>
+        <p class="note" style="margin:0;">L'économie valorise l'énergie déviée au tarif nuit réglé dans Paramètres, en supposant que le ballon chauffe normalement en heures creuses. Le besoin ECS quotidien est une estimation à ajuster selon ta consommation réelle d'eau chaude.</p>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ================= SYNTHÈSE ================= -->
+  <section class="view" id="view-synthese">
+
+    <div class="card">
+      <h2>Comparaison des scénarios</h2>
+      <p class="note" style="margin:0;">Basé sur ton historique importé, annualisé. Chaque scénario inclut l'investissement qui lui est propre.</p>
+    </div>
+
+    <div id="syntheseEmpty" class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19V10M12 19V5M20 19v-7" stroke-linecap="round"/></svg>
+      <p>Importe ton historique Shelly dans le Tableau de bord pour comparer les scénarios.</p>
+    </div>
+
+    <div id="syntheseResults" style="display:none;">
+
+      <div class="card">
+        <h2>Sans batterie</h2>
+        <div class="kpi-grid">
+          <div class="kpi"><div class="label">Investissement</div><div class="value" id="synSansInvest">–</div></div>
+          <div class="kpi accent-solar"><div class="label">Autoconsommation</div><div class="value" id="synSansAutoconso">–</div></div>
+          <div class="kpi accent-solar"><div class="label">Économie annuelle</div><div class="value" id="synSansEconomie">–</div></div>
+          <div class="kpi"><div class="label">Rentabilité</div><div class="value" id="synSansRoi">–</div></div>
+        </div>
+      </div>
+
+      <div class="card card--battery">
+        <h2>Avec batterie</h2>
+        <div class="kpi-grid">
+          <div class="kpi"><div class="label">Investissement</div><div class="value" id="synAvecInvest">–</div></div>
+          <div class="kpi accent-battery"><div class="label">Autoconsommation</div><div class="value" id="synAvecAutoconso">–</div></div>
+          <div class="kpi accent-battery"><div class="label">Économie annuelle</div><div class="value" id="synAvecEconomie">–</div></div>
+          <div class="kpi"><div class="label">Rentabilité</div><div class="value" id="synAvecRoi">–</div></div>
+        </div>
+      </div>
+
+      <div class="card card--solar">
+        <h2>Avec batterie + ballon ECS</h2>
+        <div class="kpi-grid">
+          <div class="kpi"><div class="label">Investissement</div><div class="value" id="synBallonInvest">–</div></div>
+          <div class="kpi accent-solar"><div class="label">Autoconsommation</div><div class="value" id="synBallonAutoconso">–</div></div>
+          <div class="kpi accent-solar"><div class="label">Économie annuelle</div><div class="value" id="synBallonEconomie">–</div></div>
+          <div class="kpi"><div class="label">Rentabilité</div><div class="value" id="synBallonRoi">–</div></div>
+        </div>
+      </div>
+
     </div>
 
   </section>
@@ -397,7 +524,15 @@
   </button>
   <button data-view="meteo">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.3-2A5 5 0 0 0 6 18" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    Météo &amp; 1 an
+    Météo
+  </button>
+  <button data-view="ballon">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v6m0 0 3-3m-3 3L9 5M5 12a7 7 0 1 0 14 0" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Ballon
+  </button>
+  <button data-view="synthese">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18M7 14l4-4 3 3 5-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Synthèse
   </button>
   <button data-view="settings">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.04 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.96 19.3a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.04H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.7 8.96a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9.1A1.7 1.7 0 0 0 10.14 3H10.09A2 2 0 1 1 14.09 3h-.05a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.05A1.7 1.7 0 0 0 21 10.14V10.09a2 2 0 1 1 0 3.91h-.05a1.7 1.7 0 0 0-1.55 1z"/></svg>

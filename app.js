@@ -27,6 +27,10 @@ const DEFAULT_SETTINGS = {
   poolEndHour: 16,
   poolMonthStart: 6,
   poolMonthEnd: 9,
+  ballonVolumeL: 200,
+  ballonPuissanceKw: 2.4,
+  ballonBesoinKwhJour: 4,
+  ballonPrix: 600,
 };
 
 function loadSettings() {
@@ -66,6 +70,10 @@ function fillSettingsForm() {
   document.getElementById("poolEndHour").value = settings.poolEndHour;
   document.getElementById("poolMonthStart").value = settings.poolMonthStart;
   document.getElementById("poolMonthEnd").value = settings.poolMonthEnd;
+  document.getElementById("ballonVolumeL").value = settings.ballonVolumeL;
+  document.getElementById("ballonPuissanceKw").value = settings.ballonPuissanceKw;
+  document.getElementById("ballonBesoinKwhJour").value = settings.ballonBesoinKwhJour;
+  document.getElementById("ballonPrix").value = settings.ballonPrix;
 }
 
 function readSettingsForm() {
@@ -89,6 +97,10 @@ function readSettingsForm() {
     poolEndHour: clampInt(document.getElementById("poolEndHour").value, 0, 23, 16),
     poolMonthStart: clampInt(document.getElementById("poolMonthStart").value, 1, 12, 6),
     poolMonthEnd: clampInt(document.getElementById("poolMonthEnd").value, 1, 12, 9),
+    ballonVolumeL: parseFloat(document.getElementById("ballonVolumeL").value) || 0,
+    ballonPuissanceKw: parseFloat(document.getElementById("ballonPuissanceKw").value) || 0,
+    ballonBesoinKwhJour: parseFloat(document.getElementById("ballonBesoinKwhJour").value) || 0,
+    ballonPrix: parseFloat(document.getElementById("ballonPrix").value) || 0,
   };
 }
 
@@ -480,6 +492,7 @@ function runSimulation(points, cfg) {
     series.push({
       t: new Date(p.t),
       prod: p.prod,
+      conso: p.conso,
       retour: p.retour,
       stocke,
       dech: dechargeable,
@@ -543,6 +556,141 @@ function runStoredSimulation() {
   } catch (err) {
     console.error(err);
   }
+}
+
+/* ============================================================
+   5b. SCÉNARIO PARTAGÉ — batterie + ballon d'eau chaude (ECS)
+   ============================================================ */
+
+/**
+ * Simule un scénario complet (batterie activable, ballon ECS activable) sur
+ * l'historique importé. Le ballon utilise le surplus restant APRÈS la
+ * batterie (la batterie a priorité), limité par sa puissance et le besoin
+ * quotidien d'eau chaude (remis à zéro chaque jour).
+ */
+function simulateScenario(points, cfg, opts) {
+  const battery = !!opts.battery;
+  const ballon = !!opts.ballon;
+
+  const capaciteKwh = battery ? cfg.capaciteKwh : 0;
+  const socMinKwh = capaciteKwh * (cfg.socMinPct / 100);
+  let soc = capaciteKwh * (cfg.socInitialPct / 100);
+  const efficacite = cfg.rendementPct / 100;
+  const puissanceMaxKw = cfg.puissanceMaxKw > 0 ? cfg.puissanceMaxKw : Infinity;
+
+  let totalProduction = 0, totalConsoGrid = 0, totalRetourBrut = 0;
+  let totalGainPanneaux = 0, totalCouvertBatt = 0, totalEconomieBatt = 0;
+  let totalDiverti = 0, totalEconomieBallon = 0;
+
+  let currentDayKey = null, dailyRemaining = 0;
+
+  for (const p of points) {
+    totalProduction += p.prod;
+    totalConsoGrid += p.conso;
+    totalRetourBrut += p.retour;
+
+    const tarif = isNightHour(p.hour, cfg.hcStart, cfg.hcEnd) ? cfg.tarifNuit : cfg.tarifJour;
+    const autoconsoDirecteLigne = Math.max(0, p.prod - p.retour);
+    totalGainPanneaux += autoconsoDirecteLigne * tarif;
+
+    const dayKey = dayKeyOf(new Date(p.t));
+    if (dayKey !== currentDayKey) { currentDayKey = dayKey; dailyRemaining = ballon ? cfg.ballonBesoinKwhJour : 0; }
+
+    const maxE = puissanceMaxKw * (p.durH || 1);
+    const energiePrelevee = Math.min(p.retour, maxE);
+    const place = Math.max(0, capaciteKwh - soc);
+    const stocke = battery ? Math.min(energiePrelevee * efficacite, place) : 0;
+    soc += stocke;
+    const surplusConsommeParBatterie = efficacite > 0 && stocke > 0 ? stocke / efficacite : 0;
+
+    const dispo = Math.max(0, soc - socMinKwh);
+    const dechargeable = battery ? Math.min(p.conso, dispo, maxE) : 0;
+    soc -= dechargeable;
+    totalCouvertBatt += dechargeable;
+    totalEconomieBatt += dechargeable * tarif;
+
+    if (ballon) {
+      const surplusRestant = Math.max(0, p.retour - surplusConsommeParBatterie);
+      const diverti = Math.min(surplusRestant, cfg.ballonPuissanceKw, dailyRemaining);
+      totalDiverti += diverti;
+      dailyRemaining -= diverti;
+      // Hypothèse : le ballon chauffe normalement en heures creuses — le surplus
+      // dévié évite donc cet achat au tarif nuit.
+      totalEconomieBallon += diverti * cfg.tarifNuit;
+    }
+  }
+
+  const uniqueDays = new Set(points.map((p) => dayKeyOf(new Date(p.t))));
+  const nbJours = Math.max(uniqueDays.size, 1);
+  const facteurAnnuel = 365 / nbJours;
+
+  return {
+    totalProduction, totalConsoGrid, totalRetourBrut, nbJours,
+    totalGainPanneaux, gainPanneauxAnnuel: totalGainPanneaux * facteurAnnuel,
+    totalCouvertBatt, totalEconomieBatt, economieBattAnnuel: totalEconomieBatt * facteurAnnuel,
+    totalDiverti, totalEconomieBallon, economieBallonAnnuel: totalEconomieBallon * facteurAnnuel,
+  };
+}
+
+/* ============================================================
+   5c. HISTORIQUE MENSUEL — production & consommation réelles
+   ============================================================ */
+
+function computeMonthlyHistory(series) {
+  const byMonth = new Map(); // "YYYY-MM" -> {t, prod, conso, dech}
+  for (const p of series) {
+    const y = p.t.getFullYear(), m = p.t.getMonth();
+    const key = y + "-" + String(m + 1).padStart(2, "0");
+    if (!byMonth.has(key)) byMonth.set(key, { t: new Date(y, m, 1), prod: 0, conso: 0, dech: 0 });
+    const e = byMonth.get(key);
+    e.prod += p.prod;
+    e.conso += p.conso;
+    e.dech += p.dech;
+  }
+  return Array.from(byMonth.values())
+    .sort((a, b) => a.t - b.t)
+    .map((e) => ({
+      label: e.t.toLocaleDateString("fr-FR", { month: "short", year: "2-digit" }),
+      prod: e.prod,
+      consoSansBatt: e.conso,
+      consoAvecBatt: Math.max(0, e.conso - e.dech),
+    }));
+}
+
+function buildMonthlyHistorySVG(months) {
+  const W = 700, H = 300;
+  const padL = 42, padR = 10, padT = 14, padB = 30;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const n = months.length;
+  const maxVal = Math.max(0.1, ...months.map((m) => Math.max(m.prod, m.consoSansBatt))) * 1.15;
+  const yAt = (v) => padT + plotH * (1 - v / maxVal);
+  const groupW = plotW / n;
+  const barW = groupW / 4;
+
+  let bars = "";
+  months.forEach((m, i) => {
+    const gx = padL + i * groupW + groupW / 2;
+    const items = [
+      { v: m.prod, color: "#f0a94e", offset: -1 },
+      { v: m.consoSansBatt, color: "#7c93c9", offset: 0 },
+      { v: m.consoAvecBatt, color: "#4fc9a0", offset: 1 },
+    ];
+    for (const it of items) {
+      const x = gx + it.offset * barW - barW / 2;
+      const y = yAt(it.v);
+      const h = padT + plotH - y;
+      bars += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + Math.max(0, h).toFixed(1) + '" fill="' + it.color + '" rx="1.5" />';
+    }
+    bars += '<text x="' + gx.toFixed(1) + '" y="' + (H - 10) + '" fill="#93a1b0" font-size="9" text-anchor="middle">' + m.label + "</text>";
+  });
+
+  const gridLines = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+    const yy = (padT + plotH * (1 - f)).toFixed(1);
+    return '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="#2a333f" stroke-width="1" />';
+  }).join("");
+  const yLabels = [0, maxVal / 2, maxVal].map((v) => '<text x="' + (padL - 6) + '" y="' + (yAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">' + v.toFixed(0) + "</text>").join("");
+
+  return '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">' + gridLines + yLabels + bars + "</svg>";
 }
 
 /* ============================================================
@@ -727,6 +875,72 @@ function renderResults(result) {
 
   const dailyAutoconso = computeDailyAutoconsoSeries(result.series);
   document.getElementById("autoconsoEvolutionChart").innerHTML = buildAutoconsoEvolutionSVG(dailyAutoconso);
+
+  const monthlyHistory = computeMonthlyHistory(result.series);
+  document.getElementById("monthlyHistoryChart").innerHTML = buildMonthlyHistorySVG(monthlyHistory);
+
+  renderBallonPage();
+  renderSynthesePage();
+}
+
+/* ============================================================
+   9b. PAGE BALLON D'EAU CHAUDE (ECS)
+   ============================================================ */
+
+function fmtAnnees2(v) { return fmtAnnees(v); }
+
+function renderBallonPage() {
+  if (masterData.size === 0) return;
+  document.getElementById("ballonEmpty").style.display = "none";
+  document.getElementById("ballonResults").style.display = "block";
+  const points = Array.from(masterData.values()).sort((a, b) => a.t - b.t);
+  const r = simulateScenario(points, settings, { battery: settings.capaciteKwh > 0, ballon: true });
+
+  const pctCouvert = settings.ballonBesoinKwhJour > 0
+    ? Math.min(100, (r.totalDiverti / (settings.ballonBesoinKwhJour * r.nbJours)) * 100)
+    : 0;
+  const roiBallon = r.economieBallonAnnuel > 0 ? settings.ballonPrix / r.economieBallonAnnuel : null;
+
+  document.getElementById("ballonKpiDiverti").textContent = fmtKwh(r.totalDiverti);
+  document.getElementById("ballonKpiPctCouvert").textContent = fmtPct(pctCouvert);
+  document.getElementById("ballonKpiEconomie").textContent = fmtEuro(r.totalEconomieBallon);
+  document.getElementById("ballonKpiEconomieAnnuelle").textContent = fmtEuro(r.economieBallonAnnuel);
+  document.getElementById("ballonKpiRoi").textContent = fmtAnnees2(roiBallon);
+}
+
+/* ============================================================
+   9c. PAGE SYNTHÈSE — comparaison des 3 scénarios
+   ============================================================ */
+
+function renderSynthesePage() {
+  if (masterData.size === 0) return;
+  document.getElementById("syntheseEmpty").style.display = "none";
+  document.getElementById("syntheseResults").style.display = "block";
+  const points = Array.from(masterData.values()).sort((a, b) => a.t - b.t);
+
+  const scenarios = [
+    { key: "sans", label: "Sans batterie", battery: false, ballon: false, investLabel: "Panneaux seuls" },
+    { key: "avec", label: "Avec batterie", battery: true, ballon: false, investLabel: "Panneaux + batterie" },
+    { key: "ballon", label: "Avec batterie + ballon ECS", battery: true, ballon: true, investLabel: "Panneaux + batterie + ballon" },
+  ];
+
+  for (const sc of scenarios) {
+    const r = simulateScenario(points, settings, { battery: sc.battery, ballon: sc.ballon });
+    const economieTotaleAnnuelle = r.gainPanneauxAnnuel + r.economieBattAnnuel + r.economieBallonAnnuel;
+    const investissement =
+      settings.prixPanneaux +
+      (sc.battery ? settings.prixBatterie : 0) +
+      (sc.ballon ? settings.ballonPrix : 0);
+    const roi = economieTotaleAnnuelle > 0 ? investissement / economieTotaleAnnuelle : null;
+    const autoconsoKwh = Math.max(0, r.totalProduction - r.totalRetourBrut) + r.totalCouvertBatt + r.totalDiverti;
+    const autoconsoPct = r.totalProduction > 0 ? Math.min(100, (autoconsoKwh / r.totalProduction) * 100) : 0;
+
+    const prefix = "syn" + sc.key.charAt(0).toUpperCase() + sc.key.slice(1);
+    document.getElementById(prefix + "Invest").textContent = investissement.toLocaleString("fr-FR") + " €";
+    document.getElementById(prefix + "Autoconso").textContent = fmtPct(autoconsoPct);
+    document.getElementById(prefix + "Economie").textContent = fmtEuro(economieTotaleAnnuelle);
+    document.getElementById(prefix + "Roi").textContent = fmtAnnees2(roi);
+  }
 }
 
 /**
@@ -821,6 +1035,13 @@ document.getElementById("resetSettingsBtn").addEventListener("click", () => {
   saveSettings(settings);
   fillSettingsForm();
   runStoredSimulation();
+});
+
+document.getElementById("saveBallonBtn").addEventListener("click", () => {
+  settings = readSettingsForm();
+  saveSettings(settings);
+  renderBallonPage();
+  renderSynthesePage();
 });
 
 document.getElementById("clearDataBtn").addEventListener("click", () => {
