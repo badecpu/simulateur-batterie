@@ -29,6 +29,11 @@ const DEFAULT_SETTINGS = {
   poolMonthEnd: 9,
   ballonVolumeL: 200,
   ballonPuissanceKw: 2.4,
+  ballonTempInitiale: 50,
+  ballonTempConsigne: 55,
+  ballonTempLimite: 65,
+  ballonTempFroide: 13,
+  ballonPertesDegresJour: 1.5,
   ballonBesoinKwhJour: 4,
   ballonPrix: 600,
 };
@@ -72,6 +77,11 @@ function fillSettingsForm() {
   document.getElementById("poolMonthEnd").value = settings.poolMonthEnd;
   document.getElementById("ballonVolumeL").value = settings.ballonVolumeL;
   document.getElementById("ballonPuissanceKw").value = settings.ballonPuissanceKw;
+  document.getElementById("ballonTempInitiale").value = settings.ballonTempInitiale;
+  document.getElementById("ballonTempConsigne").value = settings.ballonTempConsigne;
+  document.getElementById("ballonTempLimite").value = settings.ballonTempLimite;
+  document.getElementById("ballonTempFroide").value = settings.ballonTempFroide;
+  document.getElementById("ballonPertesDegresJour").value = settings.ballonPertesDegresJour;
   document.getElementById("ballonBesoinKwhJour").value = settings.ballonBesoinKwhJour;
   document.getElementById("ballonPrix").value = settings.ballonPrix;
 }
@@ -99,6 +109,11 @@ function readSettingsForm() {
     poolMonthEnd: clampInt(document.getElementById("poolMonthEnd").value, 1, 12, 9),
     ballonVolumeL: parseFloat(document.getElementById("ballonVolumeL").value) || 0,
     ballonPuissanceKw: parseFloat(document.getElementById("ballonPuissanceKw").value) || 0,
+    ballonTempInitiale: parseFloat(document.getElementById("ballonTempInitiale").value) || 0,
+    ballonTempConsigne: parseFloat(document.getElementById("ballonTempConsigne").value) || 0,
+    ballonTempLimite: parseFloat(document.getElementById("ballonTempLimite").value) || 0,
+    ballonTempFroide: parseFloat(document.getElementById("ballonTempFroide").value) || 0,
+    ballonPertesDegresJour: parseFloat(document.getElementById("ballonPertesDegresJour").value) || 0,
     ballonBesoinKwhJour: parseFloat(document.getElementById("ballonBesoinKwhJour").value) || 0,
     ballonPrix: parseFloat(document.getElementById("ballonPrix").value) || 0,
   };
@@ -563,14 +578,12 @@ function runStoredSimulation() {
    ============================================================ */
 
 /**
- * Simule un scénario complet (batterie activable, ballon ECS activable) sur
- * l'historique importé. Le ballon utilise le surplus restant APRÈS la
- * batterie (la batterie a priorité), limité par sa puissance et le besoin
- * quotidien d'eau chaude (remis à zéro chaque jour).
+ * Simule le scénario batterie seule sur l'historique importé (le projet est
+ * soit une batterie, soit un ballon piloté — jamais les deux à la fois ;
+ * voir simulateBallonThermal pour l'alternative ballon).
  */
 function simulateScenario(points, cfg, opts) {
   const battery = !!opts.battery;
-  const ballon = !!opts.ballon;
 
   const capaciteKwh = battery ? cfg.capaciteKwh : 0;
   const socMinKwh = capaciteKwh * (cfg.socMinPct / 100);
@@ -580,9 +593,6 @@ function simulateScenario(points, cfg, opts) {
 
   let totalProduction = 0, totalConsoGrid = 0, totalRetourBrut = 0;
   let totalGainPanneaux = 0, totalCouvertBatt = 0, totalEconomieBatt = 0;
-  let totalDiverti = 0, totalEconomieBallon = 0;
-
-  let currentDayKey = null, dailyRemaining = 0;
 
   for (const p of points) {
     totalProduction += p.prod;
@@ -593,31 +603,17 @@ function simulateScenario(points, cfg, opts) {
     const autoconsoDirecteLigne = Math.max(0, p.prod - p.retour);
     totalGainPanneaux += autoconsoDirecteLigne * tarif;
 
-    const dayKey = dayKeyOf(new Date(p.t));
-    if (dayKey !== currentDayKey) { currentDayKey = dayKey; dailyRemaining = ballon ? cfg.ballonBesoinKwhJour : 0; }
-
     const maxE = puissanceMaxKw * (p.durH || 1);
     const energiePrelevee = Math.min(p.retour, maxE);
     const place = Math.max(0, capaciteKwh - soc);
     const stocke = battery ? Math.min(energiePrelevee * efficacite, place) : 0;
     soc += stocke;
-    const surplusConsommeParBatterie = efficacite > 0 && stocke > 0 ? stocke / efficacite : 0;
 
     const dispo = Math.max(0, soc - socMinKwh);
     const dechargeable = battery ? Math.min(p.conso, dispo, maxE) : 0;
     soc -= dechargeable;
     totalCouvertBatt += dechargeable;
     totalEconomieBatt += dechargeable * tarif;
-
-    if (ballon) {
-      const surplusRestant = Math.max(0, p.retour - surplusConsommeParBatterie);
-      const diverti = Math.min(surplusRestant, cfg.ballonPuissanceKw, dailyRemaining);
-      totalDiverti += diverti;
-      dailyRemaining -= diverti;
-      // Hypothèse : le ballon chauffe normalement en heures creuses — le surplus
-      // dévié évite donc cet achat au tarif nuit.
-      totalEconomieBallon += diverti * cfg.tarifNuit;
-    }
   }
 
   const uniqueDays = new Set(points.map((p) => dayKeyOf(new Date(p.t))));
@@ -628,7 +624,70 @@ function simulateScenario(points, cfg, opts) {
     totalProduction, totalConsoGrid, totalRetourBrut, nbJours,
     totalGainPanneaux, gainPanneauxAnnuel: totalGainPanneaux * facteurAnnuel,
     totalCouvertBatt, totalEconomieBatt, economieBattAnnuel: totalEconomieBatt * facteurAnnuel,
+  };
+}
+
+/**
+ * Modèle thermique du ballon d'eau chaude piloté par le surplus PV (alternative
+ * à la batterie, jamais combinée avec elle). Suit la température heure par heure :
+ * pertes thermiques, gros soutirage du soir (19h, grosses douches), puis charge
+ * solaire plafonnée à la température limite.
+ */
+function simulateBallonThermal(points, cfg) {
+  const kwhPerDegC = cfg.ballonVolumeL * 0.001163; // capacité thermique de l'eau : 1,163 Wh / (L·°C)
+  let T = cfg.ballonTempInitiale;
+  const lossPerHour = cfg.ballonPertesDegresJour / 24;
+
+  // Répartition du besoin ECS quotidien : gros pic le soir (19h, l'équivalent de
+  // plusieurs grosses douches), complété par un peu le matin et à midi.
+  const drawShape = new Array(24).fill(0);
+  drawShape[7] = 0.10;
+  drawShape[12] = 0.15;
+  drawShape[19] = 0.75;
+
+  const series = [];
+  let totalProduction = 0, totalRetourBrut = 0, totalGainPanneaux = 0, totalDiverti = 0;
+
+  for (const p of points) {
+    totalProduction += p.prod;
+    totalRetourBrut += p.retour;
+    const tarif = isNightHour(p.hour, cfg.hcStart, cfg.hcEnd) ? cfg.tarifNuit : cfg.tarifJour;
+    totalGainPanneaux += Math.max(0, p.prod - p.retour) * tarif;
+
+    // Pertes thermiques (vers la température ambiante/eau froide, simplifiée)
+    T = Math.max(cfg.ballonTempFroide, T - lossPerHour);
+
+    // Soutirage ECS de l'heure
+    const drawKwh = drawShape[p.hour] * cfg.ballonBesoinKwhJour;
+    if (drawKwh > 0 && kwhPerDegC > 0) {
+      T = Math.max(cfg.ballonTempFroide, T - drawKwh / kwhPerDegC);
+    }
+
+    // Charge solaire, plafonnée par la puissance et la température limite
+    const energieDispo = Math.min(p.retour, cfg.ballonPuissanceKw) * (p.durH || 1);
+    let diverti = 0;
+    if (energieDispo > 0 && kwhPerDegC > 0 && T < cfg.ballonTempLimite) {
+      const placeKwh = (cfg.ballonTempLimite - T) * kwhPerDegC;
+      diverti = Math.min(energieDispo, placeKwh);
+      T += diverti / kwhPerDegC;
+    }
+    totalDiverti += diverti;
+
+    series.push({ t: new Date(p.t), prod: p.prod, temp: T });
+  }
+
+  const uniqueDays = new Set(points.map((p) => dayKeyOf(new Date(p.t))));
+  const nbJours = Math.max(uniqueDays.size, 1);
+  const facteurAnnuel = 365 / nbJours;
+  const totalEconomieBallon = totalDiverti * cfg.tarifNuit;
+  const autoconsoDirecteKwh = Math.max(0, totalProduction - totalRetourBrut);
+  const autoconsoPct = totalProduction > 0 ? Math.min(100, ((autoconsoDirecteKwh + totalDiverti) / totalProduction) * 100) : 0;
+
+  return {
+    series, nbJours, totalProduction,
+    totalGainPanneaux, gainPanneauxAnnuel: totalGainPanneaux * facteurAnnuel,
     totalDiverti, totalEconomieBallon, economieBallonAnnuel: totalEconomieBallon * facteurAnnuel,
+    autoconsoPct,
   };
 }
 
@@ -889,12 +948,14 @@ function renderResults(result) {
 
 function fmtAnnees2(v) { return fmtAnnees(v); }
 
+let ballonDailySeries = [], ballonDayKeys = [], ballonCurrentDayIndex = -1;
+
 function renderBallonPage() {
   if (masterData.size === 0) return;
   document.getElementById("ballonEmpty").style.display = "none";
   document.getElementById("ballonResults").style.display = "block";
   const points = Array.from(masterData.values()).sort((a, b) => a.t - b.t);
-  const r = simulateScenario(points, settings, { battery: settings.capaciteKwh > 0, ballon: true });
+  const r = simulateBallonThermal(points, settings);
 
   const pctCouvert = settings.ballonBesoinKwhJour > 0
     ? Math.min(100, (r.totalDiverti / (settings.ballonBesoinKwhJour * r.nbJours)) * 100)
@@ -903,10 +964,95 @@ function renderBallonPage() {
 
   document.getElementById("ballonKpiDiverti").textContent = fmtKwh(r.totalDiverti);
   document.getElementById("ballonKpiPctCouvert").textContent = fmtPct(pctCouvert);
+  document.getElementById("ballonKpiAutoconso").textContent = fmtPct(r.autoconsoPct);
   document.getElementById("ballonKpiEconomie").textContent = fmtEuro(r.totalEconomieBallon);
   document.getElementById("ballonKpiEconomieAnnuelle").textContent = fmtEuro(r.economieBallonAnnuel);
   document.getElementById("ballonKpiRoi").textContent = fmtAnnees2(roiBallon);
+
+  ballonDailySeries = r.series;
+  const seen = new Set();
+  ballonDayKeys = [];
+  for (const p of ballonDailySeries) {
+    const key = dayKeyOf(p.t);
+    if (!seen.has(key)) { seen.add(key); ballonDayKeys.push(key); }
+  }
+  ballonCurrentDayIndex = ballonDayKeys.length - 1;
+  renderBallonDailyView();
 }
+
+function renderBallonDailyView() {
+  if (ballonDayKeys.length === 0) {
+    document.getElementById("ballonDayLabel").textContent = "Aucune donnée";
+    return;
+  }
+  const key = ballonDayKeys[ballonCurrentDayIndex];
+  const points = ballonDailySeries.filter((p) => dayKeyOf(p.t) === key);
+
+  const [y, m, d] = key.split("-");
+  document.getElementById("ballonDayLabel").textContent = d + "/" + m + "/" + y;
+  document.getElementById("ballonDayPrevBtn").disabled = ballonCurrentDayIndex <= 0;
+  document.getElementById("ballonDayNextBtn").disabled = ballonCurrentDayIndex >= ballonDayKeys.length - 1;
+
+  document.getElementById("ballonDailyChart").innerHTML = buildBallonTempChartSVG(points);
+}
+
+/** Graphique SVG natif : production PV (kWh, axe gauche) et température ballon (°C, axe droit). */
+function buildBallonTempChartSVG(points) {
+  const W = 700, H = 280;
+  const padL = 40, padR = 40, padT = 14, padB = 28;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const n = points.length;
+
+  const maxProd = Math.max(0.1, ...points.map((p) => p.prod)) * 1.15;
+  const minTemp = Math.min(settings.ballonTempFroide, ...points.map((p) => p.temp)) - 2;
+  const maxTemp = Math.max(settings.ballonTempLimite, ...points.map((p) => p.temp)) + 2;
+
+  const xAt = (i) => padL + (n > 1 ? (i * plotW) / (n - 1) : plotW / 2);
+  const yProdAt = (v) => padT + plotH * (1 - v / maxProd);
+  const yTempAt = (v) => padT + plotH * (1 - (v - minTemp) / (maxTemp - minTemp));
+  const pathOf = (values, yFn) => values.map((v, i) => (i === 0 ? "M" : "L") + xAt(i).toFixed(1) + " " + yFn(v).toFixed(1)).join(" ");
+
+  const prodPath = pathOf(points.map((p) => p.prod), yProdAt);
+  const tempPath = pathOf(points.map((p) => p.temp), yTempAt);
+
+  const gridLines = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+    const yy = (padT + plotH * (1 - f)).toFixed(1);
+    return '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="#2a333f" stroke-width="1" />';
+  }).join("");
+
+  const step = Math.max(1, Math.ceil(n / 8));
+  const xLabels = points.map((p, i) => {
+    if (i % step !== 0 && i !== n - 1) return "";
+    const hh = String(p.t.getHours()).padStart(2, "0") + "h";
+    return '<text x="' + xAt(i).toFixed(1) + '" y="' + (H - 8) + '" fill="#93a1b0" font-size="10" text-anchor="middle">' + hh + "</text>";
+  }).join("");
+
+  const yProdLabels = [0, maxProd / 2, maxProd].map((v) =>
+    '<text x="' + (padL - 6) + '" y="' + (yProdAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">' + v.toFixed(1) + "</text>"
+  ).join("");
+  const yTempLabels = [minTemp, (minTemp + maxTemp) / 2, maxTemp].map((v) =>
+    '<text x="' + (W - padR + 6) + '" y="' + (yTempAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="start">' + v.toFixed(0) + "°</text>"
+  ).join("");
+
+  // Ligne de consigne, en repère
+  const consigneY = yTempAt(settings.ballonTempConsigne).toFixed(1);
+  const consigneLine = '<line x1="' + padL + '" y1="' + consigneY + '" x2="' + (W - padR) + '" y2="' + consigneY + '" stroke="#4fc9a055" stroke-width="1" stroke-dasharray="3 3" />';
+
+  return (
+    '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">' +
+    gridLines + consigneLine + xLabels + yProdLabels + yTempLabels +
+    '<path d="' + prodPath + '" fill="none" stroke="#f0a94e" stroke-width="2" />' +
+    '<path d="' + tempPath + '" fill="none" stroke="#4fc9a0" stroke-width="2.5" />' +
+    "</svg>"
+  );
+}
+
+document.getElementById("ballonDayPrevBtn").addEventListener("click", () => {
+  if (ballonCurrentDayIndex > 0) { ballonCurrentDayIndex--; renderBallonDailyView(); }
+});
+document.getElementById("ballonDayNextBtn").addEventListener("click", () => {
+  if (ballonCurrentDayIndex < ballonDayKeys.length - 1) { ballonCurrentDayIndex++; renderBallonDailyView(); }
+});
 
 /* ============================================================
    9c. PAGE SYNTHÈSE — comparaison des 3 scénarios
@@ -918,29 +1064,38 @@ function renderSynthesePage() {
   document.getElementById("syntheseResults").style.display = "block";
   const points = Array.from(masterData.values()).sort((a, b) => a.t - b.t);
 
-  const scenarios = [
-    { key: "sans", label: "Sans batterie", battery: false, ballon: false, investLabel: "Panneaux seuls" },
-    { key: "avec", label: "Avec batterie", battery: true, ballon: false, investLabel: "Panneaux + batterie" },
-    { key: "ballon", label: "Avec batterie + ballon ECS", battery: true, ballon: true, investLabel: "Panneaux + batterie + ballon" },
-  ];
+  // Sans rien (panneaux seuls)
+  const rSans = simulateScenario(points, settings, { battery: false });
+  const investSans = settings.prixPanneaux;
+  const roiSans = rSans.gainPanneauxAnnuel > 0 ? investSans / rSans.gainPanneauxAnnuel : null;
+  const autoconsoSansKwh = Math.max(0, rSans.totalProduction - rSans.totalRetourBrut);
+  const autoconsoSansPct = rSans.totalProduction > 0 ? (autoconsoSansKwh / rSans.totalProduction) * 100 : 0;
+  document.getElementById("synSansInvest").textContent = investSans.toLocaleString("fr-FR") + " €";
+  document.getElementById("synSansAutoconso").textContent = fmtPct(autoconsoSansPct);
+  document.getElementById("synSansEconomie").textContent = fmtEuro(rSans.gainPanneauxAnnuel);
+  document.getElementById("synSansRoi").textContent = fmtAnnees2(roiSans);
 
-  for (const sc of scenarios) {
-    const r = simulateScenario(points, settings, { battery: sc.battery, ballon: sc.ballon });
-    const economieTotaleAnnuelle = r.gainPanneauxAnnuel + r.economieBattAnnuel + r.economieBallonAnnuel;
-    const investissement =
-      settings.prixPanneaux +
-      (sc.battery ? settings.prixBatterie : 0) +
-      (sc.ballon ? settings.ballonPrix : 0);
-    const roi = economieTotaleAnnuelle > 0 ? investissement / economieTotaleAnnuelle : null;
-    const autoconsoKwh = Math.max(0, r.totalProduction - r.totalRetourBrut) + r.totalCouvertBatt + r.totalDiverti;
-    const autoconsoPct = r.totalProduction > 0 ? Math.min(100, (autoconsoKwh / r.totalProduction) * 100) : 0;
+  // Avec batterie
+  const rBatt = simulateScenario(points, settings, { battery: true });
+  const economieBattTotale = rBatt.gainPanneauxAnnuel + rBatt.economieBattAnnuel;
+  const investBatt = settings.prixPanneaux + settings.prixBatterie;
+  const roiBatt = economieBattTotale > 0 ? investBatt / economieBattTotale : null;
+  const autoconsoBattKwh = Math.max(0, rBatt.totalProduction - rBatt.totalRetourBrut) + rBatt.totalCouvertBatt;
+  const autoconsoBattPct = rBatt.totalProduction > 0 ? Math.min(100, (autoconsoBattKwh / rBatt.totalProduction) * 100) : 0;
+  document.getElementById("synAvecInvest").textContent = investBatt.toLocaleString("fr-FR") + " €";
+  document.getElementById("synAvecAutoconso").textContent = fmtPct(autoconsoBattPct);
+  document.getElementById("synAvecEconomie").textContent = fmtEuro(economieBattTotale);
+  document.getElementById("synAvecRoi").textContent = fmtAnnees2(roiBatt);
 
-    const prefix = "syn" + sc.key.charAt(0).toUpperCase() + sc.key.slice(1);
-    document.getElementById(prefix + "Invest").textContent = investissement.toLocaleString("fr-FR") + " €";
-    document.getElementById(prefix + "Autoconso").textContent = fmtPct(autoconsoPct);
-    document.getElementById(prefix + "Economie").textContent = fmtEuro(economieTotaleAnnuelle);
-    document.getElementById(prefix + "Roi").textContent = fmtAnnees2(roi);
-  }
+  // Avec ballon ECS (sans batterie)
+  const rBallon = simulateBallonThermal(points, settings);
+  const economieBallonTotale = rBallon.gainPanneauxAnnuel + rBallon.economieBallonAnnuel;
+  const investBallon = settings.prixPanneaux + settings.ballonPrix;
+  const roiBallon = economieBallonTotale > 0 ? investBallon / economieBallonTotale : null;
+  document.getElementById("synBallonInvest").textContent = investBallon.toLocaleString("fr-FR") + " €";
+  document.getElementById("synBallonAutoconso").textContent = fmtPct(rBallon.autoconsoPct);
+  document.getElementById("synBallonEconomie").textContent = fmtEuro(economieBallonTotale);
+  document.getElementById("synBallonRoi").textContent = fmtAnnees2(roiBallon);
 }
 
 /**
@@ -1035,13 +1190,6 @@ document.getElementById("resetSettingsBtn").addEventListener("click", () => {
   saveSettings(settings);
   fillSettingsForm();
   runStoredSimulation();
-});
-
-document.getElementById("saveBallonBtn").addEventListener("click", () => {
-  settings = readSettingsForm();
-  saveSettings(settings);
-  renderBallonPage();
-  renderSynthesePage();
 });
 
 document.getElementById("clearDataBtn").addEventListener("click", () => {

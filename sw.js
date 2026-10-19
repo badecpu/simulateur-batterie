@@ -1,4 +1,4 @@
-const CACHE_NAME = "battsim-cache-v20";
+const CACHE_NAME = "battsim-cache-v21";
 
 const APP_SHELL = [
   "./",

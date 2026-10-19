@@ -277,30 +277,9 @@
 
     <div class="card card--battery">
       <h2>Ballon d'eau chaude piloté</h2>
-      <p class="note" style="margin:-6px 0 12px;">
-        Simule un routeur solaire qui dévie le surplus PV restant (après la batterie, si tu en as une) vers la résistance du ballon, plutôt que de l'exporter. Calculé sur ton historique importé.
+      <p class="note" style="margin:0;">
+        Alternative à la batterie : le surplus PV chauffe directement la résistance du ballon au lieu d'être exporté. Réglages modifiables dans Paramètres → Ballon ECS.
       </p>
-      <div class="field-row">
-        <div class="field">
-          <label for="ballonVolumeL">Volume du ballon (L)</label>
-          <input type="number" id="ballonVolumeL" step="10" min="0">
-        </div>
-        <div class="field">
-          <label for="ballonPuissanceKw">Puissance résistance (kW)</label>
-          <input type="number" id="ballonPuissanceKw" step="0.1" min="0">
-        </div>
-      </div>
-      <div class="field-row">
-        <div class="field">
-          <label for="ballonBesoinKwhJour">Besoin ECS quotidien (kWh)</label>
-          <input type="number" id="ballonBesoinKwhJour" step="0.5" min="0">
-        </div>
-        <div class="field">
-          <label for="ballonPrix">Investissement routeur (€)</label>
-          <input type="number" id="ballonPrix" step="10" min="0">
-        </div>
-      </div>
-      <button class="btn btn-primary" id="saveBallonBtn">Enregistrer &amp; recalculer</button>
     </div>
 
     <div id="ballonEmpty" class="empty-state">
@@ -319,6 +298,10 @@
           <div class="value" id="ballonKpiPctCouvert">–</div>
         </div>
         <div class="kpi accent-solar">
+          <div class="label">% autoconsommation PV</div>
+          <div class="value" id="ballonKpiAutoconso">–</div>
+        </div>
+        <div class="kpi accent-solar">
           <div class="label">Économie sur la période</div>
           <div class="value" id="ballonKpiEconomie">–</div>
         </div>
@@ -332,9 +315,28 @@
           <div class="note">Investissement du routeur seul ÷ économie annuelle qu'il apporte</div>
         </div>
       </div>
+
+      <div class="chart-wrap">
+        <h2>Température du ballon dans la journée</h2>
+        <div class="day-nav">
+          <button id="ballonDayPrevBtn" class="day-nav-btn" aria-label="Jour précédent">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <span id="ballonDayLabel" class="day-label">–</span>
+          <button id="ballonDayNextBtn" class="day-nav-btn" aria-label="Jour suivant">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div class="legend-row">
+          <span class="legend-item"><span class="swatch" style="background:var(--solar)"></span>Production PV (kWh)</span>
+          <span class="legend-item"><span class="swatch" style="background:var(--battery)"></span>Température ballon (°C)</span>
+        </div>
+        <div id="ballonDailyChart" class="svg-chart"></div>
+      </div>
+
       <div class="card">
-        <h2>Hypothèse</h2>
-        <p class="note" style="margin:0;">L'économie valorise l'énergie déviée au tarif nuit réglé dans Paramètres, en supposant que le ballon chauffe normalement en heures creuses. Le besoin ECS quotidien est une estimation à ajuster selon ta consommation réelle d'eau chaude.</p>
+        <h2>Hypothèses</h2>
+        <p class="note" style="margin:0;">Le soutirage d'eau chaude est réparti sur la journée avec un pic le soir (19h, ~75% du besoin — l'équivalent de plusieurs grosses douches), le reste le matin et à midi. L'économie valorise l'énergie déviée au tarif nuit, en supposant que le ballon chaufferait sinon en heures creuses. Le chauffage d'appoint réseau (si le solaire ne suffit pas à atteindre la consigne) n'est pas modélisé ici — seul l'apport solaire est compté.</p>
       </div>
     </div>
 
@@ -376,7 +378,7 @@
       </div>
 
       <div class="card card--solar">
-        <h2>Avec batterie + ballon ECS</h2>
+        <h2>Avec ballon ECS (sans batterie)</h2>
         <div class="kpi-grid">
           <div class="kpi"><div class="label">Investissement</div><div class="value" id="synBallonInvest">–</div></div>
           <div class="kpi accent-solar"><div class="label">Autoconsommation</div><div class="value" id="synBallonAutoconso">–</div></div>
@@ -503,6 +505,55 @@
       <div class="field">
         <label for="poolMonthEnd">Mois de fin saison</label>
         <input type="number" id="poolMonthEnd" step="1" min="1" max="12">
+      </div>
+    </div>
+
+    <div class="card card--battery" style="margin-top:18px;">
+      <h2>Ballon ECS (alternative à la batterie)</h2>
+      <p class="note" style="margin:-6px 0 12px;">Modèle thermique : le surplus PV chauffe l'eau, qui perd lentement en chaleur et se recharge en eau froide lors des gros soutirages du soir.</p>
+      <div class="field-row">
+        <div class="field">
+          <label for="ballonVolumeL">Volume (L)</label>
+          <input type="number" id="ballonVolumeL" step="10" min="0">
+        </div>
+        <div class="field">
+          <label for="ballonPuissanceKw">Puissance résistance (kW)</label>
+          <input type="number" id="ballonPuissanceKw" step="0.1" min="0">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="ballonTempInitiale">Température initiale (°C)</label>
+          <input type="number" id="ballonTempInitiale" step="1" min="0" max="90">
+        </div>
+        <div class="field">
+          <label for="ballonTempConsigne">Température de consigne (°C)</label>
+          <input type="number" id="ballonTempConsigne" step="1" min="0" max="90">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="ballonTempLimite">Température limite (°C)</label>
+          <input type="number" id="ballonTempLimite" step="1" min="0" max="95">
+        </div>
+        <div class="field">
+          <label for="ballonTempFroide">Température eau froide (°C)</label>
+          <input type="number" id="ballonTempFroide" step="1" min="0" max="30">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="ballonPertesDegresJour">Pertes thermiques (°C/jour)</label>
+          <input type="number" id="ballonPertesDegresJour" step="0.1" min="0">
+        </div>
+        <div class="field">
+          <label for="ballonBesoinKwhJour">Besoin ECS quotidien (kWh)</label>
+          <input type="number" id="ballonBesoinKwhJour" step="0.5" min="0">
+        </div>
+      </div>
+      <div class="field">
+        <label for="ballonPrix">Investissement routeur solaire (€)</label>
+        <input type="number" id="ballonPrix" step="10" min="0">
       </div>
     </div>
 
