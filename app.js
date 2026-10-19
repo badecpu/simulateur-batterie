@@ -673,7 +673,7 @@ function simulateBallonThermal(points, cfg) {
     }
     totalDiverti += diverti;
 
-    series.push({ t: new Date(p.t), prod: p.prod, temp: T });
+    series.push({ t: new Date(p.t), prod: p.prod, retour: p.retour, temp: T });
   }
 
   const uniqueDays = new Set(points.map((p) => dayKeyOf(new Date(p.t))));
@@ -1003,7 +1003,7 @@ function buildBallonTempChartSVG(points) {
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const n = points.length;
 
-  const maxProd = Math.max(0.1, ...points.map((p) => p.prod)) * 1.15;
+  const maxProd = Math.max(0.1, ...points.map((p) => Math.max(p.prod, p.retour))) * 1.15;
   const minTemp = Math.min(settings.ballonTempFroide, ...points.map((p) => p.temp)) - 2;
   const maxTemp = Math.max(settings.ballonTempLimite, ...points.map((p) => p.temp)) + 2;
 
@@ -1013,6 +1013,7 @@ function buildBallonTempChartSVG(points) {
   const pathOf = (values, yFn) => values.map((v, i) => (i === 0 ? "M" : "L") + xAt(i).toFixed(1) + " " + yFn(v).toFixed(1)).join(" ");
 
   const prodPath = pathOf(points.map((p) => p.prod), yProdAt);
+  const surplusPath = pathOf(points.map((p) => p.retour), yProdAt);
   const tempPath = pathOf(points.map((p) => p.temp), yTempAt);
 
   const gridLines = [0, 0.25, 0.5, 0.75, 1].map((f) => {
@@ -1042,6 +1043,7 @@ function buildBallonTempChartSVG(points) {
     '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">' +
     gridLines + consigneLine + xLabels + yProdLabels + yTempLabels +
     '<path d="' + prodPath + '" fill="none" stroke="#f0a94e" stroke-width="2" />' +
+    '<path d="' + surplusPath + '" fill="none" stroke="#f0a94e" stroke-width="1.5" stroke-dasharray="4 3" />' +
     '<path d="' + tempPath + '" fill="none" stroke="#4fc9a0" stroke-width="2.5" />' +
     "</svg>"
   );
