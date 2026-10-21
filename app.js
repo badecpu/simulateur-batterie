@@ -177,6 +177,35 @@ document.querySelectorAll("nav.tabbar button").forEach((btn) => {
 });
 
 /* ============================================================
+   4b. SÉLECTEUR DE SCÉNARIO — Mon scénario (sans / batterie / ballon)
+   ============================================================ */
+
+const SCENARIO_KEY = "battSim.scenario.v1";
+
+function loadScenarioChoice() {
+  const v = localStorage.getItem(SCENARIO_KEY);
+  return v === "batterie" || v === "ballon" || v === "sans" ? v : "sans";
+}
+
+function showScenarioBlock(choice) {
+  document.getElementById("scenarioSansBlock").style.display = choice === "sans" ? "block" : "none";
+  document.getElementById("scenarioBattBlock").style.display = choice === "batterie" ? "block" : "none";
+  document.getElementById("scenarioBallonBlock").style.display = choice === "ballon" ? "block" : "none";
+  document.querySelectorAll(".scenario-switch-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.scenario === choice);
+  });
+}
+
+document.querySelectorAll(".scenario-switch-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    localStorage.setItem(SCENARIO_KEY, btn.dataset.scenario);
+    showScenarioBlock(btn.dataset.scenario);
+  });
+});
+
+showScenarioBlock(loadScenarioChoice());
+
+/* ============================================================
    4. IMPORT CSV — automatique, sans étape de correspondance
    ============================================================ */
 
@@ -895,6 +924,7 @@ function fmtAnnees(v) {
 function renderResults(result) {
   document.getElementById("resultsEmpty").style.display = "none";
   document.getElementById("results").style.display = "block";
+  document.getElementById("scenarioNoData").style.display = "none";
 
   const k = result.kpis;
 
@@ -952,8 +982,6 @@ let ballonDailySeries = [], ballonDayKeys = [], ballonCurrentDayIndex = -1;
 
 function renderBallonPage() {
   if (masterData.size === 0) return;
-  document.getElementById("ballonEmpty").style.display = "none";
-  document.getElementById("ballonResults").style.display = "block";
   const points = Array.from(masterData.values()).sort((a, b) => a.t - b.t);
   const r = simulateBallonThermal(points, settings);
 
@@ -1062,8 +1090,6 @@ document.getElementById("ballonDayNextBtn").addEventListener("click", () => {
 
 function renderSynthesePage() {
   if (masterData.size === 0) return;
-  document.getElementById("syntheseEmpty").style.display = "none";
-  document.getElementById("syntheseResults").style.display = "block";
   const points = Array.from(masterData.values()).sort((a, b) => a.t - b.t);
 
   // Sans rien (panneaux seuls)
@@ -1098,6 +1124,30 @@ function renderSynthesePage() {
   document.getElementById("synBallonAutoconso").textContent = fmtPct(rBallon.autoconsoPct);
   document.getElementById("synBallonEconomie").textContent = fmtEuro(economieBallonTotale);
   document.getElementById("synBallonRoi").textContent = fmtAnnees2(roiBallon);
+
+  // --- Résumé en langage clair ---
+  const candidats = [
+    { nom: "la batterie", roi: roiBatt, economie: economieBattTotale, invest: investBatt },
+    { nom: "le ballon ECS", roi: roiBallon, economie: economieBallonTotale, invest: investBallon },
+  ].filter((c) => c.roi != null);
+
+  let resume;
+  if (candidats.length === 0) {
+    resume = "Pas assez de surplus exporté sur la période pour que la batterie ou le ballon se rentabilisent — les panneaux seuls restent la meilleure option pour l'instant.";
+  } else {
+    const meilleur = candidats.reduce((a, b) => (a.roi < b.roi ? a : b));
+    const autre = candidats.find((c) => c !== meilleur);
+    resume =
+      "D'après tes " + rSans.nbJours + " jour(s) de données importées, " + meilleur.nom +
+      " se rentabilise le plus vite (environ " + fmtAnnees2(meilleur.roi) + " pour un investissement de " +
+      meilleur.invest.toLocaleString("fr-FR") + " €).";
+    if (autre && autre.roi != null) {
+      resume += " " + (autre.nom === "la batterie" ? "La batterie" : "Le ballon ECS") +
+        " économise " + (autre.economie > meilleur.economie ? "plus par an (" : "moins par an (") +
+        fmtEuro(autre.economie) + ") mais coûte plus cher à rentabiliser (" + fmtAnnees2(autre.roi) + ").";
+    }
+  }
+  document.getElementById("summaryText").textContent = resume;
 }
 
 /**
@@ -1200,6 +1250,7 @@ document.getElementById("clearDataBtn").addEventListener("click", () => {
   updateHistoryStatus();
   document.getElementById("results").style.display = "none";
   document.getElementById("resultsEmpty").style.display = "block";
+  document.getElementById("scenarioNoData").style.display = "block";
   document.getElementById("periodLabel").textContent = "Aucune donnée";
   fileStatusEl.textContent = "Aucune donnée importée pour le moment.";
   fileStatusEl.className = "file-status";
