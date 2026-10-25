@@ -70,7 +70,7 @@
           <div class="kpi accent-battery"><div class="label">Économie annuelle</div><div class="value" id="synAvecEconomie">–</div></div>
           <div class="kpi"><div class="label">Rentabilité</div><div class="value" id="synAvecRoi">–</div></div>
         </div>
-        <p class="note" style="margin:8px 0 0;">Stocke le surplus électrique pour le réutiliser plus tard dans la journée ou le soir.</p>
+        <p class="note" style="margin:8px 0 0;">Stocke le surplus électrique pour le réutiliser plus tard dans la journée ou le soir. Chiffres pour la batterie seule, en plus des panneaux (déjà comptés ci-dessus).</p>
       </div>
 
       <div class="card card--solar">
@@ -81,7 +81,7 @@
           <div class="kpi accent-solar"><div class="label">Économie annuelle</div><div class="value" id="synBallonEconomie">–</div></div>
           <div class="kpi"><div class="label">Rentabilité</div><div class="value" id="synBallonRoi">–</div></div>
         </div>
-        <p class="note" style="margin:8px 0 0;">Dévie le surplus vers la résistance du ballon d'eau chaude — investissement plus faible, valorise moins d'énergie.</p>
+        <p class="note" style="margin:8px 0 0;">Dévie le surplus vers la résistance du ballon d'eau chaude. Chiffres pour le routeur solaire seul, en plus des panneaux (déjà comptés ci-dessus).</p>
       </div>
 
       <h2 class="section-title">Détail panneaux seuls</h2>
@@ -510,11 +510,6 @@
       </div>
     </div>
 
-    <div class="settings-actions">
-      <button class="btn btn-primary" id="saveSettingsBtn">Enregistrer</button>
-      <button class="btn btn-secondary" id="resetSettingsBtn">Réinitialiser</button>
-    </div>
-
     <div class="card" style="margin-top:18px;">
       <h2>Piscine (pour la projection saisonnière)</h2>
       <p class="note" style="margin:-6px 0 12px;">Ton historique importé inclut le fonctionnement de la pompe — ces réglages permettent à la projection 1 an de ne pas l'appliquer aux mois hors saison.</p>
@@ -595,6 +590,11 @@
         <label for="ballonPrix">Investissement routeur solaire (€)</label>
         <input type="number" id="ballonPrix" step="10" min="0">
       </div>
+    </div>
+
+    <div class="settings-actions" style="margin-top:18px;">
+      <button class="btn btn-primary" id="saveSettingsBtn">Enregistrer</button>
+      <button class="btn btn-secondary" id="resetSettingsBtn">Réinitialiser</button>
     </div>
 
     <div class="card" style="margin-top:18px;">

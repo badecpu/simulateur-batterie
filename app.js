@@ -1103,10 +1103,11 @@ function renderSynthesePage() {
   document.getElementById("synSansEconomie").textContent = fmtEuro(rSans.gainPanneauxAnnuel);
   document.getElementById("synSansRoi").textContent = fmtAnnees2(roiSans);
 
-  // Avec batterie
+  // Avec batterie — investissement/économie/rentabilité de la batterie SEULE (hors panneaux,
+  // déjà comptés dans le scénario "Sans stockage" ci-dessus)
   const rBatt = simulateScenario(points, settings, { battery: true });
-  const economieBattTotale = rBatt.gainPanneauxAnnuel + rBatt.economieBattAnnuel;
-  const investBatt = settings.prixPanneaux + settings.prixBatterie;
+  const economieBattTotale = rBatt.economieBattAnnuel;
+  const investBatt = settings.prixBatterie;
   const roiBatt = economieBattTotale > 0 ? investBatt / economieBattTotale : null;
   const autoconsoBattKwh = Math.max(0, rBatt.totalProduction - rBatt.totalRetourBrut) + rBatt.totalCouvertBatt;
   const autoconsoBattPct = rBatt.totalProduction > 0 ? Math.min(100, (autoconsoBattKwh / rBatt.totalProduction) * 100) : 0;
@@ -1115,10 +1116,10 @@ function renderSynthesePage() {
   document.getElementById("synAvecEconomie").textContent = fmtEuro(economieBattTotale);
   document.getElementById("synAvecRoi").textContent = fmtAnnees2(roiBatt);
 
-  // Avec ballon ECS (sans batterie)
+  // Avec ballon ECS (sans batterie) — investissement/économie/rentabilité du ballon SEUL
   const rBallon = simulateBallonThermal(points, settings);
-  const economieBallonTotale = rBallon.gainPanneauxAnnuel + rBallon.economieBallonAnnuel;
-  const investBallon = settings.prixPanneaux + settings.ballonPrix;
+  const economieBallonTotale = rBallon.economieBallonAnnuel;
+  const investBallon = settings.ballonPrix;
   const roiBallon = economieBallonTotale > 0 ? investBallon / economieBallonTotale : null;
   document.getElementById("synBallonInvest").textContent = investBallon.toLocaleString("fr-FR") + " €";
   document.getElementById("synBallonAutoconso").textContent = fmtPct(rBallon.autoconsoPct);
