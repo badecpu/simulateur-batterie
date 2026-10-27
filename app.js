@@ -35,6 +35,8 @@ const DEFAULT_SETTINGS = {
   ballonTempFroide: 13,
   ballonPertesDegresJour: 1.5,
   ballonBesoinKwhJour: 4,
+  ballonTarifGazKwh: 0.10,
+  ballonRendementChaudiere: 90,
   ballonPrix: 600,
 };
 
@@ -83,6 +85,8 @@ function fillSettingsForm() {
   document.getElementById("ballonTempFroide").value = settings.ballonTempFroide;
   document.getElementById("ballonPertesDegresJour").value = settings.ballonPertesDegresJour;
   document.getElementById("ballonBesoinKwhJour").value = settings.ballonBesoinKwhJour;
+  document.getElementById("ballonTarifGazKwh").value = settings.ballonTarifGazKwh;
+  document.getElementById("ballonRendementChaudiere").value = settings.ballonRendementChaudiere;
   document.getElementById("ballonPrix").value = settings.ballonPrix;
 }
 
@@ -115,6 +119,8 @@ function readSettingsForm() {
     ballonTempFroide: parseFloat(document.getElementById("ballonTempFroide").value) || 0,
     ballonPertesDegresJour: parseFloat(document.getElementById("ballonPertesDegresJour").value) || 0,
     ballonBesoinKwhJour: parseFloat(document.getElementById("ballonBesoinKwhJour").value) || 0,
+    ballonTarifGazKwh: parseFloat(document.getElementById("ballonTarifGazKwh").value) || 0,
+    ballonRendementChaudiere: clampInt(document.getElementById("ballonRendementChaudiere").value, 1, 100, 90),
     ballonPrix: parseFloat(document.getElementById("ballonPrix").value) || 0,
   };
 }
@@ -692,8 +698,11 @@ function simulateBallonThermal(points, cfg) {
       T = Math.max(cfg.ballonTempFroide, T - drawKwh / kwhPerDegC);
     }
 
-    // Charge solaire, plafonnée par la puissance et la température limite
-    const energieDispo = Math.min(p.retour, cfg.ballonPuissanceKw) * (p.durH || 1);
+    // Charge solaire, plafonnée par la puissance et la température limite.
+    // La puissance (kW) doit être convertie en énergie pour CET intervalle
+    // (kW × durée) AVANT d'être comparée au surplus disponible (déjà en kWh) —
+    // sinon, sur un intervalle ≠ 1h, le résultat est faux.
+    const energieDispo = Math.min(p.retour, cfg.ballonPuissanceKw * (p.durH || 1));
     let diverti = 0;
     if (energieDispo > 0 && kwhPerDegC > 0 && T < cfg.ballonTempLimite) {
       const placeKwh = (cfg.ballonTempLimite - T) * kwhPerDegC;
@@ -708,7 +717,10 @@ function simulateBallonThermal(points, cfg) {
   const uniqueDays = new Set(points.map((p) => dayKeyOf(new Date(p.t))));
   const nbJours = Math.max(uniqueDays.size, 1);
   const facteurAnnuel = 365 / nbJours;
-  const totalEconomieBallon = totalDiverti * cfg.tarifNuit;
+  // Économie = coût du gaz qu'il aurait fallu brûler pour produire la même eau chaude,
+  // compte tenu du rendement de la chaudière (moins performante qu'une résistance électrique).
+  const rendementChaudiere = Math.max(0.01, cfg.ballonRendementChaudiere / 100);
+  const totalEconomieBallon = (totalDiverti / rendementChaudiere) * cfg.ballonTarifGazKwh;
   const autoconsoDirecteKwh = Math.max(0, totalProduction - totalRetourBrut);
   const autoconsoPct = totalProduction > 0 ? Math.min(100, ((autoconsoDirecteKwh + totalDiverti) / totalProduction) * 100) : 0;
 

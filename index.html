@@ -339,7 +339,7 @@
 
       <div class="card">
         <h2>Hypothèses</h2>
-        <p class="note" style="margin:0;">Le soutirage d'eau chaude est réparti sur la journée avec un pic le soir (19h, ~75% du besoin — l'équivalent de plusieurs grosses douches), le reste le matin et à midi. L'économie valorise l'énergie déviée au tarif nuit, en supposant que le ballon chaufferait sinon en heures creuses. Le chauffage d'appoint réseau (si le solaire ne suffit pas à atteindre la consigne) n'est pas modélisé ici — seul l'apport solaire est compté.</p>
+        <p class="note" style="margin:0;">Le soutirage d'eau chaude est réparti sur la journée avec un pic le soir (19h, ~75% du besoin — l'équivalent de plusieurs grosses douches), le reste le matin et à midi. L'économie valorise l'énergie déviée au coût du gaz qu'il aurait fallu brûler pour produire la même eau chaude (tarif gaz ÷ rendement chaudière, réglables dans Paramètres), en supposant que le ballon serait sinon chauffé au gaz. Le chauffage d'appoint (si le solaire ne suffit pas à atteindre la consigne) n'est pas modélisé ici — seul l'apport solaire est compté.</p>
       </div>
     </div>
 
@@ -584,6 +584,16 @@
         <div class="field">
           <label for="ballonBesoinKwhJour">Besoin ECS quotidien (kWh)</label>
           <input type="number" id="ballonBesoinKwhJour" step="0.5" min="0">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="ballonTarifGazKwh">Tarif gaz (€/kWh)</label>
+          <input type="number" id="ballonTarifGazKwh" step="0.005" min="0">
+        </div>
+        <div class="field">
+          <label for="ballonRendementChaudiere">Rendement chaudière (%)</label>
+          <input type="number" id="ballonRendementChaudiere" step="1" min="1" max="100">
         </div>
       </div>
       <div class="field">
