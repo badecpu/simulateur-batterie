@@ -1270,6 +1270,116 @@ document.getElementById("clearDataBtn").addEventListener("click", () => {
 });
 
 /* ============================================================
+   7b. EXPORT — logiciel (code source) et résultats
+   ============================================================ */
+
+/**
+ * Déclenche le téléchargement d'un texte. Sur iOS Safari, il n'existe pas
+ * d'API web pour choisir un dossier directement — le navigateur ouvre son
+ * flux de téléchargement habituel (menu de partage), où l'utilisateur choisit
+ * « Enregistrer dans Fichiers » puis le dossier de destination lui-même.
+ */
+function downloadTextFile(text, filename) {
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+const exportStatusEl = document.getElementById("exportStatus");
+
+async function exportSoftware() {
+  exportStatusEl.textContent = "Préparation de l'export…";
+  exportStatusEl.className = "file-status";
+  const files = ["index.html", "app.js", "meteo.js", "style.css", "sw.js", "manifest.json"];
+  let combined =
+    "Export du code source — Simulateur Batterie Solaire\n" +
+    "Généré le " + new Date().toLocaleString("fr-FR") + "\n" +
+    "Fichiers concaténés, séparés par des bannières ===== FICHIER: ... =====\n\n";
+  let failures = 0;
+  for (const f of files) {
+    try {
+      const res = await fetch(f, { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const text = await res.text();
+      combined += "===== FICHIER: " + f + " =====\n\n" + text + "\n\n";
+    } catch (err) {
+      combined += "===== FICHIER: " + f + " (échec de lecture : " + err.message + ") =====\n\n";
+      failures++;
+    }
+  }
+  downloadTextFile(combined, "simulateur-batterie-code-source.txt");
+  exportStatusEl.textContent = failures === 0
+    ? "Export du code source lancé — " + files.length + " fichier(s)."
+    : "Export lancé, mais " + failures + " fichier(s) n'ont pas pu être lus.";
+  exportStatusEl.className = failures === 0 ? "file-status ok" : "file-status err";
+}
+
+function exportResults() {
+  if (masterData.size === 0) {
+    exportStatusEl.textContent = "Aucune donnée importée à exporter.";
+    exportStatusEl.className = "file-status err";
+    return;
+  }
+
+  const points = Array.from(masterData.values()).sort((a, b) => a.t - b.t);
+  const rSans = simulateScenario(points, settings, { battery: false });
+  const rBatt = simulateScenario(points, settings, { battery: true });
+  const rBallon = simulateBallonThermal(points, settings);
+
+  const donneesHoraires = points.map((p) => ({
+    horodatage: new Date(p.t).toISOString(),
+    production_kWh: Number(p.prod.toFixed(4)),
+    consommation_reseau_kWh: Number(p.conso.toFixed(4)),
+    surplus_exporte_kWh: Number(p.retour.toFixed(4)),
+  }));
+
+  const exportObj = {
+    genere_le: new Date().toISOString(),
+    periode: {
+      debut: new Date(points[0].t).toISOString(),
+      fin: new Date(points[points.length - 1].t).toISOString(),
+      nb_jours_couverts: rSans.nbJours,
+    },
+    parametres_actuels: settings,
+    scenario_sans_stockage: {
+      production_totale_kWh: rSans.totalProduction,
+      consommation_reseau_totale_kWh: rSans.totalConsoGrid,
+      export_reseau_total_kWh: rSans.totalRetourBrut,
+      gain_panneaux_periode_euros: rSans.totalGainPanneaux,
+      gain_panneaux_annuel_euros: rSans.gainPanneauxAnnuel,
+    },
+    scenario_avec_batterie: {
+      quantite_couverte_par_batterie_kWh: rBatt.totalCouvertBatt,
+      economie_batterie_periode_euros: rBatt.totalEconomieBatt,
+      economie_batterie_annuelle_euros: rBatt.economieBattAnnuel,
+      investissement_batterie_euros: settings.prixBatterie,
+    },
+    scenario_avec_ballon_ecs: {
+      energie_deviee_vers_ballon_kWh: rBallon.totalDiverti,
+      autoconsommation_pv_pct: rBallon.autoconsoPct,
+      economie_ballon_periode_euros: rBallon.totalEconomieBallon,
+      economie_ballon_annuelle_euros: rBallon.economieBallonAnnuel,
+      investissement_ballon_euros: settings.ballonPrix,
+      hypothese_valorisation: "Coût du gaz évité (tarif gaz ÷ rendement chaudière), pas le tarif électrique.",
+    },
+    donnees_horaires_importees: donneesHoraires,
+  };
+
+  downloadTextFile(JSON.stringify(exportObj, null, 2), "simulateur-batterie-resultats.txt");
+  exportStatusEl.textContent = "Export des résultats lancé — " + donneesHoraires.length.toLocaleString("fr-FR") + " points horaires inclus.";
+  exportStatusEl.className = "file-status ok";
+}
+
+document.getElementById("exportSoftwareBtn").addEventListener("click", exportSoftware);
+document.getElementById("exportResultsBtn").addEventListener("click", exportResults);
+
+/* ============================================================
    8. INITIALISATION
    ============================================================ */
 
