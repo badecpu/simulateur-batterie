@@ -322,6 +322,107 @@ function runYearProjection(climatology, consoProfilesInSeason, cfg, enedisMonthl
   return { monthlyResults, totals };
 }
 
+/**
+ * Même principe que runYearProjection, mais pour le scénario ballon ECS
+ * (mutuellement exclusif avec la batterie) : modèle thermique continu sur
+ * les 12 mois, charge solaire plafonnée par la température limite.
+ */
+function runYearProjectionBallon(climatology, consoProfilesInSeason, cfg, enedisMonthlyClim) {
+  const consoProfilesOffSeason = {
+    weekday: buildOffSeasonProfile(consoProfilesInSeason.weekday, cfg),
+    weekend: buildOffSeasonProfile(consoProfilesInSeason.weekend, cfg),
+  };
+  const shapesInSeason = { weekday: normalizeShape(consoProfilesInSeason.weekday), weekend: normalizeShape(consoProfilesInSeason.weekend) };
+  const shapesOffSeason = { weekday: normalizeShape(consoProfilesOffSeason.weekday), weekend: normalizeShape(consoProfilesOffSeason.weekend) };
+
+  const now = new Date();
+  const monthsMeta = [];
+  for (let m = 0; m < 12; m++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + m, 1);
+    monthsMeta.push({ year: d.getFullYear(), month: d.getMonth(), label: d.toLocaleDateString("fr-FR", { month: "short", year: "2-digit" }) });
+  }
+
+  const kwhPerDegC = cfg.ballonVolumeL * 0.001163;
+  let T = cfg.ballonTempInitiale;
+  const lossPerHour = cfg.ballonPertesDegresJour / 24;
+  // Même répartition du besoin ECS que le modèle journalier (pic 19h, grosses douches).
+  const drawShape = new Array(24).fill(0);
+  drawShape[7] = 0.10;
+  drawShape[12] = 0.15;
+  drawShape[19] = 0.75;
+  const rendementChaudiere = Math.max(0.01, cfg.ballonRendementChaudiere / 100);
+
+  const monthlyResults = monthsMeta.map((m) => ({
+    ...m, prod: 0, conso: 0, autoconsoDirecte: 0, autoconsoBallon: 0, economieSeul: 0, economieBallon: 0,
+  }));
+
+  for (let mi = 0; mi < monthsMeta.length; mi++) {
+    const { year, month } = monthsMeta[mi];
+    const climMonth = climatology[month + 1];
+    const dailyProdKwh = cfg.puissanceKwc * climMonth.avgGhi * PERFORMANCE_RATIO;
+    const pvShape = buildPvHourlyShape(dailyProdKwh, climMonth.avgDaylightH);
+
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const enSaison = isPoolSeasonMonth(month + 1, cfg);
+    const shapesDuMois = enSaison ? shapesInSeason : shapesOffSeason;
+    const profilesDuMois = enSaison ? consoProfilesInSeason : consoProfilesOffSeason;
+
+    const enedisAvg = enedisMonthlyClim ? enedisMonthlyClim[month + 1] : null;
+    const fallbackDailyKwh = { weekday: profilesDuMois.weekday.reduce((s, v) => s + v, 0), weekend: profilesDuMois.weekend.reduce((s, v) => s + v, 0) };
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(year, month, day);
+      const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+      const shape = isWeekend ? shapesDuMois.weekend : shapesDuMois.weekday;
+      const targetDailyKwh = enedisAvg != null ? enedisAvg : (isWeekend ? fallbackDailyKwh.weekend : fallbackDailyKwh.weekday);
+
+      for (let hour = 0; hour < 24; hour++) {
+        const prod = pvShape[hour];
+        const conso = shape[hour] * targetDailyKwh;
+        const surplus = Math.max(0, prod - conso);
+        const directAutoconso = Math.min(prod, conso);
+
+        // Pertes thermiques puis soutirage ECS de l'heure
+        T = Math.max(cfg.ballonTempFroide, T - lossPerHour);
+        const drawKwh = drawShape[hour] * cfg.ballonBesoinKwhJour;
+        if (drawKwh > 0 && kwhPerDegC > 0) T = Math.max(cfg.ballonTempFroide, T - drawKwh / kwhPerDegC);
+
+        // Charge solaire, plafonnée par la puissance (boucle toujours au pas d'1h,
+        // donc pas de conversion kW→kWh supplémentaire ici) et la température limite
+        const energieDispo = Math.min(surplus, cfg.ballonPuissanceKw);
+        let diverti = 0;
+        if (energieDispo > 0 && kwhPerDegC > 0 && T < cfg.ballonTempLimite) {
+          const placeKwh = (cfg.ballonTempLimite - T) * kwhPerDegC;
+          diverti = Math.min(energieDispo, placeKwh);
+          T += diverti / kwhPerDegC;
+        }
+
+        const tarif = isNightHour(hour, cfg.hcStart, cfg.hcEnd) ? cfg.tarifNuit : cfg.tarifJour;
+
+        const r = monthlyResults[mi];
+        r.prod += prod;
+        r.conso += conso;
+        r.autoconsoDirecte += directAutoconso;
+        r.autoconsoBallon += directAutoconso + diverti;
+        r.economieSeul += directAutoconso * tarif;
+        // Économie = coût du gaz évité (tarif gaz ÷ rendement chaudière), pas le tarif électrique.
+        r.economieBallon += (diverti / rendementChaudiere) * cfg.ballonTarifGazKwh;
+      }
+    }
+  }
+
+  const totals = monthlyResults.reduce((acc, r) => ({
+    prod: acc.prod + r.prod,
+    conso: acc.conso + r.conso,
+    autoconsoDirecte: acc.autoconsoDirecte + r.autoconsoDirecte,
+    autoconsoBallon: acc.autoconsoBallon + r.autoconsoBallon,
+    economieSeul: acc.economieSeul + r.economieSeul,
+    economieBallon: acc.economieBallon + r.economieBallon,
+  }), { prod: 0, conso: 0, autoconsoDirecte: 0, autoconsoBallon: 0, economieSeul: 0, economieBallon: 0 });
+
+  return { monthlyResults, totals };
+}
+
 /* ============================================================
    5. GRAPHIQUES SVG
    ============================================================ */
@@ -363,26 +464,28 @@ function buildCorrelationChartSVG(labels, consoKwh, prodKwh, sunshineH) {
   );
 }
 
-function buildMonthlyBarChartSVG(monthlyResults) {
+function buildMonthlyBarChartSVG(monthlyResultsBatt, monthlyResultsBallon) {
   const W = 700, H = 320;
   const padL = 42, padR = 10, padT = 14, padB = 34;
   const plotW = W - padL - padR, plotH = H - padT - padB;
-  const n = monthlyResults.length;
-  const maxVal = Math.max(0.1, ...monthlyResults.map((m) => Math.max(m.prod, m.conso))) * 1.15;
+  const n = monthlyResultsBatt.length;
+  const maxVal = Math.max(0.1, ...monthlyResultsBatt.map((m) => Math.max(m.prod, m.conso))) * 1.15;
   const yAt = (v) => padT + plotH * (1 - v / maxVal);
 
   const groupW = plotW / n;
-  const barW = groupW / 5;
+  const barW = groupW / 6;
 
   let bars = "";
-  monthlyResults.forEach((m, i) => {
+  monthlyResultsBatt.forEach((m, i) => {
+    const mBallon = monthlyResultsBallon ? monthlyResultsBallon[i] : null;
     const gx = padL + i * groupW + groupW / 2;
-    const bars3 = [
-      { v: m.prod, color: "#f0a94e", offset: -1.1 },
-      { v: m.conso, color: "#7c93c9", offset: 0 },
-      { v: m.autoconsoBatt, color: "#4fc9a0", offset: 1.1 },
+    const items = [
+      { v: m.prod, color: "#f0a94e", offset: -1.5 },
+      { v: m.conso, color: "#7c93c9", offset: -0.5 },
+      { v: m.autoconsoBatt, color: "#4fc9a0", offset: 0.5 },
     ];
-    for (const b of bars3) {
+    if (mBallon) items.push({ v: mBallon.autoconsoBallon, color: "#c97bda", offset: 1.5 });
+    for (const b of items) {
       const x = gx + b.offset * barW - barW / 2;
       const y = yAt(b.v);
       const h = padT + plotH - y;
@@ -441,8 +544,9 @@ async function loadMeteoAndProject() {
     const climatology = computeMonthlyClimatology(weatherDays);
     const consoProfiles = computeTypicalConsoProfiles();
     const { monthlyResults, totals } = runYearProjection(climatology, consoProfiles, settings, enedisClim);
+    const { monthlyResults: monthlyResultsBallon, totals: totalsBallon } = runYearProjectionBallon(climatology, consoProfiles, settings, enedisClim);
 
-    renderMeteoResults(weatherDays, monthlyResults, totals);
+    renderMeteoResults(weatherDays, monthlyResults, totals, monthlyResultsBallon, totalsBallon);
 
     meteoStatusEl.textContent = weatherDays.length.toLocaleString("fr-FR") + " jours météo chargés (Gerzat, Open-Meteo)" +
       (enedisDaily ? " · conso calibrée sur " + enedisDaily.length.toLocaleString("fr-FR") + " jours réels Enedis." : ".");
@@ -456,7 +560,7 @@ async function loadMeteoAndProject() {
   }
 }
 
-function renderMeteoResults(weatherDays, monthlyResults, totals) {
+function renderMeteoResults(weatherDays, monthlyResults, totals, monthlyResultsBallon, totalsBallon) {
   document.getElementById("meteoEmpty").style.display = "none";
   document.getElementById("meteoResults").style.display = "block";
 
@@ -464,6 +568,15 @@ function renderMeteoResults(weatherDays, monthlyResults, totals) {
   const autoconsoBattPct = totals.prod > 0 ? (totals.autoconsoBatt / totals.prod) * 100 : 0;
   const roiSeul = totals.economieSeul > 0 ? settings.prixPanneaux / totals.economieSeul : null;
   const roiBatt = totals.economieBatt > 0 ? (settings.prixPanneaux + settings.prixBatterie) / totals.economieBatt : null;
+
+  // Scénario ballon ECS (exclusif avec la batterie) : système complet panneaux + ballon,
+  // même cadrage que « PV + batterie » — économie directe (électricité) + gaz évité.
+  const autoconsoBallonPct = totalsBallon.prod > 0 ? (totalsBallon.autoconsoBallon / totalsBallon.prod) * 100 : 0;
+  const gainsBallon = totalsBallon.economieSeul + totalsBallon.economieBallon;
+  const roiBallon = gainsBallon > 0 ? (settings.prixPanneaux + settings.ballonPrix) / gainsBallon : null;
+  document.getElementById("mKpiAutoconsoBallon").textContent = fmtPct(autoconsoBallonPct);
+  document.getElementById("mKpiGainsBallon").textContent = fmtEuro(gainsBallon);
+  document.getElementById("mKpiRoiBallon").textContent = fmtAnnees(roiBallon);
 
   document.getElementById("mKpiProdAn").textContent = fmtKwh(totals.prod);
   document.getElementById("mKpiAutoconsoSeul").textContent = fmtPct(autoconsoSeulPct);
@@ -508,7 +621,7 @@ function renderMeteoResults(weatherDays, monthlyResults, totals) {
   }
 
   // --- Graphique mensuel ---
-  document.getElementById("monthlyChart").innerHTML = buildMonthlyBarChartSVG(monthlyResults);
+  document.getElementById("monthlyChart").innerHTML = buildMonthlyBarChartSVG(monthlyResults, monthlyResultsBallon);
 }
 
 loadMeteoBtn.addEventListener("click", loadMeteoAndProject);
