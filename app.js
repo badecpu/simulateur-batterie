@@ -991,6 +991,8 @@ function renderResults(result) {
 function fmtAnnees2(v) { return fmtAnnees(v); }
 
 let ballonDailySeries = [], ballonDayKeys = [], ballonCurrentDayIndex = -1;
+let ballonDayMaxTemp = new Map(); // "YYYY-MM-DD" -> température maximale du jour (°C)
+let ballonWeekEndIndex = -1;      // index (dans ballonDayKeys) du dernier jour de la semaine affichée
 
 function renderBallonPage() {
   if (masterData.size === 0) return;
@@ -1018,6 +1020,77 @@ function renderBallonPage() {
   }
   ballonCurrentDayIndex = ballonDayKeys.length - 1;
   renderBallonDailyView();
+
+  ballonDayMaxTemp = new Map();
+  for (const p of ballonDailySeries) {
+    const k = dayKeyOf(p.t);
+    const cur = ballonDayMaxTemp.get(k);
+    if (cur === undefined || p.temp > cur) ballonDayMaxTemp.set(k, p.temp);
+  }
+  ballonWeekEndIndex = ballonDayKeys.length - 1; // par défaut : les 7 derniers jours
+  renderBallonWeeklyView();
+}
+
+function fmtJourMois(key) {
+  const [, m, d] = key.split("-");
+  return d + "/" + m;
+}
+
+function renderBallonWeeklyView() {
+  const labelEl = document.getElementById("ballonWeekLabel");
+  if (ballonDayKeys.length === 0) {
+    labelEl.textContent = "Aucune donnée";
+    return;
+  }
+  const end = ballonWeekEndIndex;
+  const start = Math.max(0, end - 6);
+  const keys = ballonDayKeys.slice(start, end + 1);
+  const days = keys.map((k) => ({ key: k, max: ballonDayMaxTemp.get(k) }));
+
+  labelEl.textContent = fmtJourMois(keys[0]) + " → " + fmtJourMois(keys[keys.length - 1]) + "/" + keys[keys.length - 1].slice(0, 4);
+  document.getElementById("ballonWeekPrevBtn").disabled = start <= 0;
+  document.getElementById("ballonWeekNextBtn").disabled = end >= ballonDayKeys.length - 1;
+
+  document.getElementById("ballonWeeklyChart").innerHTML = buildBallonMaxTempBarsSVG(days);
+}
+
+/** Graphique à bâtons SVG : température maximale du ballon, un bâton par jour. */
+function buildBallonMaxTempBarsSVG(days) {
+  const W = 700, H = 270;
+  const padL = 40, padR = 16, padT = 26, padB = 28;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const n = Math.max(days.length, 1);
+
+  const consigne = settings.ballonTempConsigne;
+  const maxVal = Math.max(settings.ballonTempLimite, consigne, ...days.map((d) => d.max)) + 5;
+  const yAt = (v) => padT + plotH * (1 - v / maxVal);
+
+  const slotW = plotW / n;
+  const barW = Math.min(slotW * 0.6, 60);
+
+  const gridLines = [0, 20, 40, 60, 80].filter((v) => v <= maxVal).map((v) => {
+    const yy = yAt(v).toFixed(1);
+    return '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="#2a333f" stroke-width="1" />' +
+      '<text x="' + (padL - 6) + '" y="' + (yAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">' + v + "°</text>";
+  }).join("");
+
+  let bars = "";
+  days.forEach((d, i) => {
+    const cx = padL + i * slotW + slotW / 2;
+    const y = yAt(d.max);
+    const h = padT + plotH - y;
+    const color = d.max >= consigne ? "#4fc9a0" : "#f0a94e";
+    bars += '<rect x="' + (cx - barW / 2).toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + Math.max(0, h).toFixed(1) + '" fill="' + color + '" rx="3" />';
+    bars += '<text x="' + cx.toFixed(1) + '" y="' + (y - 6).toFixed(1) + '" fill="#eef2f6" font-size="11" font-weight="600" text-anchor="middle">' + Math.round(d.max) + "°</text>";
+    bars += '<text x="' + cx.toFixed(1) + '" y="' + (H - 8) + '" fill="#93a1b0" font-size="10" text-anchor="middle">' + fmtJourMois(d.key) + "</text>";
+  });
+
+  const consigneY = yAt(consigne).toFixed(1);
+  const consigneLine =
+    '<line x1="' + padL + '" y1="' + consigneY + '" x2="' + (W - padR) + '" y2="' + consigneY + '" stroke="#eef2f6" stroke-opacity="0.45" stroke-width="1" stroke-dasharray="4 3" />' +
+    '<text x="' + (W - padR) + '" y="' + (yAt(consigne) - 4).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">consigne ' + consigne + "°</text>";
+
+  return '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">' + gridLines + bars + consigneLine + "</svg>";
 }
 
 function renderBallonDailyView() {
@@ -1094,6 +1167,18 @@ document.getElementById("ballonDayPrevBtn").addEventListener("click", () => {
 });
 document.getElementById("ballonDayNextBtn").addEventListener("click", () => {
   if (ballonCurrentDayIndex < ballonDayKeys.length - 1) { ballonCurrentDayIndex++; renderBallonDailyView(); }
+});
+
+// Navigation par semaine : on décale la fenêtre de 7 jours, sans jamais
+// descendre sous une fenêtre complète (sauf si l'historique est plus court).
+document.getElementById("ballonWeekPrevBtn").addEventListener("click", () => {
+  const minEnd = Math.min(6, ballonDayKeys.length - 1);
+  ballonWeekEndIndex = Math.max(minEnd, ballonWeekEndIndex - 7);
+  renderBallonWeeklyView();
+});
+document.getElementById("ballonWeekNextBtn").addEventListener("click", () => {
+  ballonWeekEndIndex = Math.min(ballonDayKeys.length - 1, ballonWeekEndIndex + 7);
+  renderBallonWeeklyView();
 });
 
 /* ============================================================

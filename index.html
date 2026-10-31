@@ -337,6 +337,25 @@
         <div id="ballonDailyChart" class="svg-chart"></div>
       </div>
 
+      <div class="chart-wrap">
+        <h2>Température maximale atteinte par jour</h2>
+        <p class="note" style="margin:-4px 0 10px;">Sur 7 jours glissants : le point le plus chaud du ballon chaque jour. Vert = la consigne a été atteinte grâce au solaire, orange = elle ne l'a pas été.</p>
+        <div class="day-nav">
+          <button id="ballonWeekPrevBtn" class="day-nav-btn" aria-label="Semaine précédente">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <span id="ballonWeekLabel" class="day-label" style="min-width:150px;">–</span>
+          <button id="ballonWeekNextBtn" class="day-nav-btn" aria-label="Semaine suivante">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div class="legend-row">
+          <span class="legend-item"><span class="swatch" style="background:#4fc9a0"></span>Consigne atteinte</span>
+          <span class="legend-item"><span class="swatch" style="background:#f0a94e"></span>Consigne non atteinte</span>
+        </div>
+        <div id="ballonWeeklyChart" class="svg-chart"></div>
+      </div>
+
       <div class="card">
         <h2>Hypothèses</h2>
         <p class="note" style="margin:0;">Le soutirage d'eau chaude est réparti sur la journée avec un pic le soir (19h, ~75% du besoin — l'équivalent de plusieurs grosses douches), le reste le matin et à midi. L'économie valorise l'énergie déviée au coût du gaz qu'il aurait fallu brûler pour produire la même eau chaude (tarif gaz ÷ rendement chaudière, réglables dans Paramètres), en supposant que le ballon serait sinon chauffé au gaz. Le chauffage d'appoint (si le solaire ne suffit pas à atteindre la consigne) n'est pas modélisé ici — seul l'apport solaire est compté.</p>
