@@ -206,26 +206,27 @@
       </div>
 
       <div class="chart-wrap">
-        <h2>Évolution de l'autoconsommation sur la période</h2>
-        <p class="note" style="margin:-4px 0 10px;">Quand la ligne orange (autoproduction) chute, un bon % d'autoconsommation est trompeur : tu produis peu, donc le peu que tu consommes suffit à "remplir" le ratio.</p>
-        <div class="legend-row">
-          <span class="legend-item"><span class="swatch" style="background:var(--grid)"></span>Autoconso. sans batterie</span>
-          <span class="legend-item"><span class="swatch" style="background:var(--battery)"></span>Autoconso. avec batterie</span>
+        <h2>Bilan par jour : production, autoconsommation et batterie</h2>
+        <p class="note" style="margin:-4px 0 10px;">Sur 7 jours glissants. Pour chaque jour : ce que les panneaux ont produit, ce qui a été consommé directement puis stocké en batterie (empilés), et le niveau le plus haut atteint par la batterie.</p>
+        <div class="day-nav">
+          <button id="battWeekPrevBtn" class="day-nav-btn" aria-label="Semaine précédente">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <span id="battWeekLabel" class="day-label" style="min-width:150px;">–</span>
+          <button id="battWeekNextBtn" class="day-nav-btn" aria-label="Semaine suivante">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
         </div>
         <div class="legend-row">
-          <span class="legend-item"><span class="swatch" style="background:var(--solar)"></span>Autoproduction (avec batterie)</span>
+          <span class="legend-item"><span class="swatch" style="background:#f0a94e"></span>Production PV</span>
+          <span class="legend-item"><span class="swatch" style="background:#7c93c9"></span>Autoconso. directe</span>
         </div>
-        <div id="autoconsoEvolutionChart" class="svg-chart"></div>
-      </div>
-
-      <div class="chart-wrap">
-        <h2>Historique mensuel réel</h2>
         <div class="legend-row">
-          <span class="legend-item"><span class="swatch" style="background:var(--solar)"></span>Production</span>
-          <span class="legend-item"><span class="swatch" style="background:var(--grid)"></span>Conso. sans batterie</span>
-          <span class="legend-item"><span class="swatch" style="background:var(--battery)"></span>Conso. avec batterie</span>
+          <span class="legend-item"><span class="swatch" style="background:#4fc9a0"></span>Stocké en batterie</span>
+          <span class="legend-item"><span class="swatch" style="background:#c97bda"></span>Niveau max batterie</span>
         </div>
-        <div id="monthlyHistoryChart" class="svg-chart"></div>
+        <div id="battWeeklyChart" class="svg-chart"></div>
+        <p class="note" style="margin:6px 0 0;">« Stocké » = énergie réellement entrée dans la batterie, après pertes de rendement.</p>
       </div>
 
       <div class="chart-wrap">
@@ -337,6 +338,25 @@
         <div id="ballonDailyChart" class="svg-chart"></div>
       </div>
 
+      <div class="chart-wrap">
+        <h2>Température maximale atteinte par jour</h2>
+        <p class="note" style="margin:-4px 0 10px;">Sur 7 jours glissants : le point le plus chaud du ballon chaque jour. Vert = la consigne a été atteinte grâce au solaire, orange = elle ne l'a pas été.</p>
+        <div class="day-nav">
+          <button id="ballonWeekPrevBtn" class="day-nav-btn" aria-label="Semaine précédente">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <span id="ballonWeekLabel" class="day-label" style="min-width:150px;">–</span>
+          <button id="ballonWeekNextBtn" class="day-nav-btn" aria-label="Semaine suivante">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div class="legend-row">
+          <span class="legend-item"><span class="swatch" style="background:#4fc9a0"></span>Consigne atteinte</span>
+          <span class="legend-item"><span class="swatch" style="background:#f0a94e"></span>Consigne non atteinte</span>
+        </div>
+        <div id="ballonWeeklyChart" class="svg-chart"></div>
+      </div>
+
       <div class="card">
         <h2>Hypothèses</h2>
         <p class="note" style="margin:0;">Le soutirage d'eau chaude est réparti sur la journée avec un pic le soir (19h, ~75% du besoin — l'équivalent de plusieurs grosses douches), le reste le matin et à midi. L'économie valorise l'énergie déviée au coût du gaz qu'il aurait fallu brûler pour produire la même eau chaude (tarif gaz ÷ rendement chaudière, réglables dans Paramètres), en supposant que le ballon serait sinon chauffé au gaz. Le chauffage d'appoint (si le solaire ne suffit pas à atteindre la consigne) n'est pas modélisé ici — seul l'apport solaire est compté.</p>
@@ -394,6 +414,18 @@
           <div class="label">Amortissement PV + batterie</div>
           <div class="value" id="mKpiRoiBatt">–</div>
         </div>
+        <div class="kpi accent-solar">
+          <div class="label">Autoconsommation PV + ballon</div>
+          <div class="value" id="mKpiAutoconsoBallon">–</div>
+        </div>
+        <div class="kpi accent-solar">
+          <div class="label">Gains annuels (PV + ballon)</div>
+          <div class="value" id="mKpiGainsBallon">–</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Amortissement PV + ballon</div>
+          <div class="value" id="mKpiRoiBallon">–</div>
+        </div>
       </div>
 
       <div class="chart-wrap">
@@ -413,6 +445,7 @@
           <span class="legend-item"><span class="swatch" style="background:var(--solar)"></span>Production</span>
           <span class="legend-item"><span class="swatch" style="background:var(--grid)"></span>Consommation</span>
           <span class="legend-item"><span class="swatch" style="background:var(--battery)"></span>Autoconsommée (avec batterie)</span>
+          <span class="legend-item"><span class="swatch" style="background:#c97bda"></span>Autoconsommée (avec ballon)</span>
         </div>
         <div id="monthlyChart" class="svg-chart"></div>
       </div>
