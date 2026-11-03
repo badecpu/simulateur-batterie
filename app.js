@@ -733,122 +733,65 @@ function simulateBallonThermal(points, cfg) {
 }
 
 /* ============================================================
-   5c. BILAN PAR JOUR (batterie) — production, autoconsommation, stockage
+   5c. HISTORIQUE MENSUEL — production & consommation réelles
    ============================================================ */
 
-let battWeekDays = [];      // un élément par jour : {key, prod, autoDirecte, stocke, maxSoc}
-let battWeekEndIndex = -1;  // index (dans battWeekDays) du dernier jour de la semaine affichée
-
-/**
- * Agrège la série horaire par jour : production, autoconsommation directe,
- * énergie stockée dans la batterie et niveau maximal atteint (en kWh).
- */
-function computeBattDailyBilan(series) {
-  const byDay = new Map();
+function computeMonthlyHistory(series) {
+  const byMonth = new Map(); // "YYYY-MM" -> {t, prod, conso, dech}
   for (const p of series) {
-    const key = dayKeyOf(p.t);
-    if (!byDay.has(key)) byDay.set(key, { key, prod: 0, autoDirecte: 0, stocke: 0, maxSoc: 0 });
-    const e = byDay.get(key);
+    const y = p.t.getFullYear(), m = p.t.getMonth();
+    const key = y + "-" + String(m + 1).padStart(2, "0");
+    if (!byMonth.has(key)) byMonth.set(key, { t: new Date(y, m, 1), prod: 0, conso: 0, dech: 0 });
+    const e = byMonth.get(key);
     e.prod += p.prod;
-    e.autoDirecte += Math.max(0, p.prod - p.retour);
-    e.stocke += p.stocke;
-    if (p.soc > e.maxSoc) e.maxSoc = p.soc;
+    e.conso += p.conso;
+    e.dech += p.dech;
   }
-  return Array.from(byDay.values()).sort((a, b) => (a.key < b.key ? -1 : 1));
+  return Array.from(byMonth.values())
+    .sort((a, b) => a.t - b.t)
+    .map((e) => ({
+      label: e.t.toLocaleDateString("fr-FR", { month: "short", year: "2-digit" }),
+      prod: e.prod,
+      consoSansBatt: e.conso,
+      consoAvecBatt: Math.max(0, e.conso - e.dech),
+    }));
 }
 
-function initBattWeeklyView(series) {
-  battWeekDays = computeBattDailyBilan(series);
-  battWeekEndIndex = battWeekDays.length - 1; // par défaut : les 7 derniers jours
-  renderBattWeeklyView();
-}
-
-function renderBattWeeklyView() {
-  const labelEl = document.getElementById("battWeekLabel");
-  if (battWeekDays.length === 0) {
-    labelEl.textContent = "Aucune donnée";
-    document.getElementById("battWeeklyChart").innerHTML = "";
-    return;
-  }
-  const end = battWeekEndIndex;
-  const start = Math.max(0, end - 6);
-  const days = battWeekDays.slice(start, end + 1);
-
-  labelEl.textContent = fmtJourMois(days[0].key) + " → " + fmtJourMois(days[days.length - 1].key) + "/" + days[days.length - 1].key.slice(0, 4);
-  document.getElementById("battWeekPrevBtn").disabled = start <= 0;
-  document.getElementById("battWeekNextBtn").disabled = end >= battWeekDays.length - 1;
-  document.getElementById("battWeeklyChart").innerHTML = buildBattWeeklyBarsSVG(days);
-}
-
-/**
- * Graphique à bâtons SVG, 3 barres par jour (kWh) :
- *  1. production PV ;
- *  2. barre empilée : autoconsommation directe (bas) + énergie stockée en batterie (haut) ;
- *  3. niveau maximal atteint par la batterie.
- */
-function buildBattWeeklyBarsSVG(days) {
-  const W = 700, H = 290;
-  const padL = 40, padR = 10, padT = 22, padB = 28;
+function buildMonthlyHistorySVG(months) {
+  const W = 700, H = 300;
+  const padL = 42, padR = 10, padT = 14, padB = 30;
   const plotW = W - padL - padR, plotH = H - padT - padB;
-  const n = Math.max(days.length, 1);
-
-  const maxVal = Math.max(0.1, ...days.map((d) => Math.max(d.prod, d.autoDirecte + d.stocke, d.maxSoc))) * 1.15;
+  const n = months.length;
+  const maxVal = Math.max(0.1, ...months.map((m) => Math.max(m.prod, m.consoSansBatt))) * 1.15;
   const yAt = (v) => padT + plotH * (1 - v / maxVal);
-  const baseY = padT + plotH;
+  const groupW = plotW / n;
+  const barW = groupW / 4;
 
-  const slotW = plotW / n;
-  const barW = Math.min(slotW / 4.2, 30);
-  const step = barW * 1.25; // écart entre centres de barres voisines
+  let bars = "";
+  months.forEach((m, i) => {
+    const gx = padL + i * groupW + groupW / 2;
+    const items = [
+      { v: m.prod, color: "#f0a94e", offset: -1 },
+      { v: m.consoSansBatt, color: "#7c93c9", offset: 0 },
+      { v: m.consoAvecBatt, color: "#4fc9a0", offset: 1 },
+    ];
+    for (const it of items) {
+      const x = gx + it.offset * barW - barW / 2;
+      const y = yAt(it.v);
+      const h = padT + plotH - y;
+      bars += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + Math.max(0, h).toFixed(1) + '" fill="' + it.color + '" rx="1.5" />';
+    }
+    bars += '<text x="' + gx.toFixed(1) + '" y="' + (H - 10) + '" fill="#93a1b0" font-size="9" text-anchor="middle">' + m.label + "</text>";
+  });
 
   const gridLines = [0, 0.25, 0.5, 0.75, 1].map((f) => {
     const yy = (padT + plotH * (1 - f)).toFixed(1);
     return '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="#2a333f" stroke-width="1" />';
   }).join("");
-  const yLabels = [0, maxVal / 2, maxVal].map((v) =>
-    '<text x="' + (padL - 6) + '" y="' + (yAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">' + v.toFixed(1) + "</text>"
-  ).join("");
-
-  const rect = (x, y, h, color) =>
-    '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + Math.max(0, h).toFixed(1) + '" fill="' + color + '" rx="2" />';
-  const valueLabel = (cx, y, v) =>
-    '<text x="' + cx.toFixed(1) + '" y="' + (y - 4).toFixed(1) + '" fill="#eef2f6" font-size="10" font-weight="600" text-anchor="middle">' + v.toFixed(1) + "</text>";
-
-  let bars = "";
-  days.forEach((d, i) => {
-    const cx = padL + i * slotW + slotW / 2;
-
-    // 1) Production PV
-    const cxProd = cx - step;
-    bars += rect(cxProd - barW / 2, yAt(d.prod), baseY - yAt(d.prod), "#f0a94e");
-    bars += valueLabel(cxProd, yAt(d.prod), d.prod);
-
-    // 2) Barre empilée : autoconsommation directe puis énergie stockée
-    const cxStack = cx;
-    const totalStack = d.autoDirecte + d.stocke;
-    bars += rect(cxStack - barW / 2, yAt(d.autoDirecte), baseY - yAt(d.autoDirecte), "#7c93c9");
-    bars += rect(cxStack - barW / 2, yAt(totalStack), yAt(d.autoDirecte) - yAt(totalStack), "#4fc9a0");
-    bars += valueLabel(cxStack, yAt(totalStack), totalStack);
-
-    // 3) Niveau maximal de la batterie
-    const cxMax = cx + step;
-    bars += rect(cxMax - barW / 2, yAt(d.maxSoc), baseY - yAt(d.maxSoc), "#c97bda");
-    bars += valueLabel(cxMax, yAt(d.maxSoc), d.maxSoc);
-
-    bars += '<text x="' + cx.toFixed(1) + '" y="' + (H - 8) + '" fill="#93a1b0" font-size="10" text-anchor="middle">' + fmtJourMois(d.key) + "</text>";
-  });
+  const yLabels = [0, maxVal / 2, maxVal].map((v) => '<text x="' + (padL - 6) + '" y="' + (yAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">' + v.toFixed(0) + "</text>").join("");
 
   return '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">' + gridLines + yLabels + bars + "</svg>";
 }
-
-document.getElementById("battWeekPrevBtn").addEventListener("click", () => {
-  const minEnd = Math.min(6, battWeekDays.length - 1);
-  battWeekEndIndex = Math.max(minEnd, battWeekEndIndex - 7);
-  renderBattWeeklyView();
-});
-document.getElementById("battWeekNextBtn").addEventListener("click", () => {
-  battWeekEndIndex = Math.min(battWeekDays.length - 1, battWeekEndIndex + 7);
-  renderBattWeeklyView();
-});
 
 /* ============================================================
    6b. VUE JOURNALIÈRE — navigation < / > entre les jours
@@ -1031,7 +974,11 @@ function renderResults(result) {
 
   initDailyView(result.series);
 
-  initBattWeeklyView(result.series);
+  const dailyAutoconso = computeDailyAutoconsoSeries(result.series);
+  document.getElementById("autoconsoEvolutionChart").innerHTML = buildAutoconsoEvolutionSVG(dailyAutoconso);
+
+  const monthlyHistory = computeMonthlyHistory(result.series);
+  document.getElementById("monthlyHistoryChart").innerHTML = buildMonthlyHistorySVG(monthlyHistory);
 
   renderBallonPage();
   renderSynthesePage();
@@ -1044,8 +991,6 @@ function renderResults(result) {
 function fmtAnnees2(v) { return fmtAnnees(v); }
 
 let ballonDailySeries = [], ballonDayKeys = [], ballonCurrentDayIndex = -1;
-let ballonDayMaxTemp = new Map(); // "YYYY-MM-DD" -> température maximale du jour (°C)
-let ballonWeekEndIndex = -1;      // index (dans ballonDayKeys) du dernier jour de la semaine affichée
 
 function renderBallonPage() {
   if (masterData.size === 0) return;
@@ -1073,77 +1018,6 @@ function renderBallonPage() {
   }
   ballonCurrentDayIndex = ballonDayKeys.length - 1;
   renderBallonDailyView();
-
-  ballonDayMaxTemp = new Map();
-  for (const p of ballonDailySeries) {
-    const k = dayKeyOf(p.t);
-    const cur = ballonDayMaxTemp.get(k);
-    if (cur === undefined || p.temp > cur) ballonDayMaxTemp.set(k, p.temp);
-  }
-  ballonWeekEndIndex = ballonDayKeys.length - 1; // par défaut : les 7 derniers jours
-  renderBallonWeeklyView();
-}
-
-function fmtJourMois(key) {
-  const [, m, d] = key.split("-");
-  return d + "/" + m;
-}
-
-function renderBallonWeeklyView() {
-  const labelEl = document.getElementById("ballonWeekLabel");
-  if (ballonDayKeys.length === 0) {
-    labelEl.textContent = "Aucune donnée";
-    return;
-  }
-  const end = ballonWeekEndIndex;
-  const start = Math.max(0, end - 6);
-  const keys = ballonDayKeys.slice(start, end + 1);
-  const days = keys.map((k) => ({ key: k, max: ballonDayMaxTemp.get(k) }));
-
-  labelEl.textContent = fmtJourMois(keys[0]) + " → " + fmtJourMois(keys[keys.length - 1]) + "/" + keys[keys.length - 1].slice(0, 4);
-  document.getElementById("ballonWeekPrevBtn").disabled = start <= 0;
-  document.getElementById("ballonWeekNextBtn").disabled = end >= ballonDayKeys.length - 1;
-
-  document.getElementById("ballonWeeklyChart").innerHTML = buildBallonMaxTempBarsSVG(days);
-}
-
-/** Graphique à bâtons SVG : température maximale du ballon, un bâton par jour. */
-function buildBallonMaxTempBarsSVG(days) {
-  const W = 700, H = 270;
-  const padL = 40, padR = 16, padT = 26, padB = 28;
-  const plotW = W - padL - padR, plotH = H - padT - padB;
-  const n = Math.max(days.length, 1);
-
-  const consigne = settings.ballonTempConsigne;
-  const maxVal = Math.max(settings.ballonTempLimite, consigne, ...days.map((d) => d.max)) + 5;
-  const yAt = (v) => padT + plotH * (1 - v / maxVal);
-
-  const slotW = plotW / n;
-  const barW = Math.min(slotW * 0.6, 60);
-
-  const gridLines = [0, 20, 40, 60, 80].filter((v) => v <= maxVal).map((v) => {
-    const yy = yAt(v).toFixed(1);
-    return '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="#2a333f" stroke-width="1" />' +
-      '<text x="' + (padL - 6) + '" y="' + (yAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">' + v + "°</text>";
-  }).join("");
-
-  let bars = "";
-  days.forEach((d, i) => {
-    const cx = padL + i * slotW + slotW / 2;
-    const y = yAt(d.max);
-    const h = padT + plotH - y;
-    const color = d.max >= consigne ? "#4fc9a0" : "#f0a94e";
-    bars += '<rect x="' + (cx - barW / 2).toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + Math.max(0, h).toFixed(1) + '" fill="' + color + '" rx="3" />';
-    bars += '<text x="' + cx.toFixed(1) + '" y="' + (y - 6).toFixed(1) + '" fill="#eef2f6" font-size="11" font-weight="600" text-anchor="middle">' + Math.round(d.max) + "°</text>";
-    bars += '<text x="' + cx.toFixed(1) + '" y="' + (H - 8) + '" fill="#93a1b0" font-size="10" text-anchor="middle">' + fmtJourMois(d.key) + "</text>";
-  });
-
-  const consigneY = yAt(consigne).toFixed(1);
-  const consigneLine =
-    '<line x1="' + padL + '" y1="' + consigneY + '" x2="' + (W - padR) + '" y2="' + consigneY + '" stroke="#eef2f6" stroke-opacity="0.45" stroke-width="1" stroke-dasharray="4 3" />' +
-    '<text x="' + (W - padR) + '" y="' + (yAt(consigne) - 4).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">consigne ' + consigne + "°</text>";
-
-  return '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">' + gridLines + bars + consigneLine + "</svg>";
 }
 
 function renderBallonDailyView() {
@@ -1222,18 +1096,6 @@ document.getElementById("ballonDayNextBtn").addEventListener("click", () => {
   if (ballonCurrentDayIndex < ballonDayKeys.length - 1) { ballonCurrentDayIndex++; renderBallonDailyView(); }
 });
 
-// Navigation par semaine : on décale la fenêtre de 7 jours, sans jamais
-// descendre sous une fenêtre complète (sauf si l'historique est plus court).
-document.getElementById("ballonWeekPrevBtn").addEventListener("click", () => {
-  const minEnd = Math.min(6, ballonDayKeys.length - 1);
-  ballonWeekEndIndex = Math.max(minEnd, ballonWeekEndIndex - 7);
-  renderBallonWeeklyView();
-});
-document.getElementById("ballonWeekNextBtn").addEventListener("click", () => {
-  ballonWeekEndIndex = Math.min(ballonDayKeys.length - 1, ballonWeekEndIndex + 7);
-  renderBallonWeeklyView();
-});
-
 /* ============================================================
    9c. PAGE SYNTHÈSE — comparaison des 3 scénarios
    ============================================================ */
@@ -1299,6 +1161,67 @@ function renderSynthesePage() {
     }
   }
   document.getElementById("summaryText").textContent = resume;
+}
+
+/**
+ * Regroupe la série horaire par jour pour obtenir le taux d'autoconsommation
+ * quotidien, sans puis avec batterie, sur toute la période chargée.
+ */
+function computeDailyAutoconsoSeries(series) {
+  const byDay = new Map();
+  for (const p of series) {
+    const key = dayKeyOf(p.t);
+    if (!byDay.has(key)) byDay.set(key, { t: p.t, prod: 0, conso: 0, autoDirecte: 0, dech: 0 });
+    const e = byDay.get(key);
+    e.prod += p.prod;
+    e.conso += p.consoTotale;
+    e.autoDirecte += Math.max(0, p.prod - p.retour);
+    e.dech += p.dech;
+  }
+  const days = Array.from(byDay.values()).sort((a, b) => a.t - b.t);
+  return days.map((d) => ({
+    t: d.t,
+    pctSansBatt: d.prod > 0 ? (d.autoDirecte / d.prod) * 100 : 0,
+    pctAvecBatt: d.prod > 0 ? Math.min(100, ((d.autoDirecte + d.dech) / d.prod) * 100) : 0,
+    pctAutoproduction: d.conso > 0 ? Math.min(100, ((d.autoDirecte + d.dech) / d.conso) * 100) : 0,
+  }));
+}
+
+/** Graphique SVG natif : deux courbes de % (0-100), une par jour de la période. */
+function buildAutoconsoEvolutionSVG(days) {
+  const W = 700, H = 260;
+  const padL = 36, padR = 16, padT = 14, padB = 28;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const n = days.length;
+
+  const xAt = (i) => padL + (n > 1 ? (i * plotW) / (n - 1) : plotW / 2);
+  const yAt = (v) => padT + plotH * (1 - Math.max(0, Math.min(100, v)) / 100);
+  const pathOf = (vals) => vals.map((v, i) => (i === 0 ? "M" : "L") + xAt(i).toFixed(1) + " " + yAt(v).toFixed(1)).join(" ");
+
+  const gridLines = [0, 25, 50, 75, 100].map((v) => {
+    const yy = yAt(v).toFixed(1);
+    return '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="#2a333f" stroke-width="1" />';
+  }).join("");
+  const yLabels = [0, 50, 100].map((v) =>
+    '<text x="' + (padL - 6) + '" y="' + (yAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">' + v + "%</text>"
+  ).join("");
+
+  const step = Math.max(1, Math.ceil(n / 8));
+  const xLabels = days.map((d, i) => {
+    if (i % step !== 0 && i !== n - 1) return "";
+    const dt = new Date(d.t);
+    const lab = String(dt.getDate()).padStart(2, "0") + "/" + String(dt.getMonth() + 1).padStart(2, "0");
+    return '<text x="' + xAt(i).toFixed(1) + '" y="' + (H - 8) + '" fill="#93a1b0" font-size="10" text-anchor="middle">' + lab + "</text>";
+  }).join("");
+
+  return (
+    '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">' +
+    gridLines + xLabels + yLabels +
+    '<path d="' + pathOf(days.map((d) => d.pctSansBatt)) + '" fill="none" stroke="#7c93c9" stroke-width="2" />' +
+    '<path d="' + pathOf(days.map((d) => d.pctAvecBatt)) + '" fill="none" stroke="#4fc9a0" stroke-width="2.5" />' +
+    '<path d="' + pathOf(days.map((d) => d.pctAutoproduction)) + '" fill="none" stroke="#f0a94e" stroke-width="2" stroke-dasharray="4 3" />' +
+    "</svg>"
+  );
 }
 
 /* ============================================================
