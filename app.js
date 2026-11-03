@@ -711,7 +711,7 @@ function simulateBallonThermal(points, cfg) {
     }
     totalDiverti += diverti;
 
-    series.push({ t: new Date(p.t), prod: p.prod, retour: p.retour, temp: T });
+    series.push({ t: new Date(p.t), prod: p.prod, retour: p.retour, diverti, temp: T });
   }
 
   const uniqueDays = new Set(points.map((p) => dayKeyOf(new Date(p.t))));
@@ -733,73 +733,315 @@ function simulateBallonThermal(points, cfg) {
 }
 
 /* ============================================================
-   5c. HISTORIQUE MENSUEL — production & consommation réelles
+   5c. SÉLECTION PARTAGÉE (semaine / jour) ET GRAPHIQUES HEBDOMADAIRES
    ============================================================ */
 
-function computeMonthlyHistory(series) {
-  const byMonth = new Map(); // "YYYY-MM" -> {t, prod, conso, dech}
-  for (const p of series) {
-    const y = p.t.getFullYear(), m = p.t.getMonth();
-    const key = y + "-" + String(m + 1).padStart(2, "0");
-    if (!byMonth.has(key)) byMonth.set(key, { t: new Date(y, m, 1), prod: 0, conso: 0, dech: 0 });
-    const e = byMonth.get(key);
-    e.prod += p.prod;
-    e.conso += p.conso;
-    e.dech += p.dech;
-  }
-  return Array.from(byMonth.values())
-    .sort((a, b) => a.t - b.t)
-    .map((e) => ({
-      label: e.t.toLocaleDateString("fr-FR", { month: "short", year: "2-digit" }),
-      prod: e.prod,
-      consoSansBatt: e.conso,
-      consoAvecBatt: Math.max(0, e.conso - e.dech),
-    }));
+// Les graphiques sont liés entre eux : changer la semaine (ou le jour) sur l'un
+// change aussi tous les autres.
+//  - 3 graphiques hebdomadaires : Vue d'ensemble, Mon scénario → Batterie, Mon scénario → Ballon
+//  - 2 graphiques journaliers   : Mon scénario → Batterie, Mon scénario → Ballon
+let allDayKeys = [];          // tous les jours disponibles ("YYYY-MM-DD"), triés
+let sharedWeekEndKey = null;  // dernier jour de la semaine affichée (fenêtre de 7 jours)
+let sharedDayKey = null;      // jour affiché sur les graphiques journaliers
+
+let battDayMap = new Map();   // jour -> {key, prod, autoDirecte, stocke, maxSoc}
+let ballonDayMap = new Map(); // jour -> {key, prod, autoDirecte, diverti, maxTemp}
+
+function fmtJourMois(key) {
+  const [, m, d] = key.split("-");
+  return d + "/" + m;
 }
 
-function buildMonthlyHistorySVG(months) {
-  const W = 700, H = 300;
-  const padL = 42, padR = 10, padT = 14, padB = 30;
-  const plotW = W - padL - padR, plotH = H - padT - padB;
-  const n = months.length;
-  const maxVal = Math.max(0.1, ...months.map((m) => Math.max(m.prod, m.consoSansBatt))) * 1.15;
-  const yAt = (v) => padT + plotH * (1 - v / maxVal);
-  const groupW = plotW / n;
-  const barW = groupW / 4;
+/**
+ * Agrège la série horaire de la batterie par jour : production, autoconsommation
+ * directe, énergie stockée et niveau maximal de la batterie (kWh).
+ */
+function computeBattDailyBilan(series) {
+  const byDay = new Map();
+  for (const p of series) {
+    const key = dayKeyOf(p.t);
+    if (!byDay.has(key)) byDay.set(key, { key, prod: 0, autoDirecte: 0, stocke: 0, maxSoc: 0 });
+    const e = byDay.get(key);
+    e.prod += p.prod;
+    e.autoDirecte += Math.max(0, p.prod - p.retour);
+    e.stocke += p.stocke;
+    if (p.soc > e.maxSoc) e.maxSoc = p.soc;
+  }
+  return Array.from(byDay.values()).sort((a, b) => (a.key < b.key ? -1 : 1));
+}
 
-  let bars = "";
-  months.forEach((m, i) => {
-    const gx = padL + i * groupW + groupW / 2;
-    const items = [
-      { v: m.prod, color: "#f0a94e", offset: -1 },
-      { v: m.consoSansBatt, color: "#7c93c9", offset: 0 },
-      { v: m.consoAvecBatt, color: "#4fc9a0", offset: 1 },
-    ];
-    for (const it of items) {
-      const x = gx + it.offset * barW - barW / 2;
-      const y = yAt(it.v);
-      const h = padT + plotH - y;
-      bars += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + Math.max(0, h).toFixed(1) + '" fill="' + it.color + '" rx="1.5" />';
-    }
-    bars += '<text x="' + gx.toFixed(1) + '" y="' + (H - 10) + '" fill="#93a1b0" font-size="9" text-anchor="middle">' + m.label + "</text>";
-  });
+/**
+ * Agrège la série horaire du ballon par jour : production, autoconsommation
+ * directe, énergie déviée vers le ballon (kWh) et température maximale (°C).
+ */
+function computeBallonDailyBilan(series) {
+  const byDay = new Map();
+  for (const p of series) {
+    const key = dayKeyOf(p.t);
+    if (!byDay.has(key)) byDay.set(key, { key, prod: 0, autoDirecte: 0, diverti: 0, maxTemp: -Infinity });
+    const e = byDay.get(key);
+    e.prod += p.prod;
+    e.autoDirecte += Math.max(0, p.prod - p.retour);
+    e.diverti += p.diverti;
+    if (p.temp > e.maxTemp) e.maxTemp = p.temp;
+  }
+  return Array.from(byDay.values()).sort((a, b) => (a.key < b.key ? -1 : 1));
+}
+
+/**
+ * Met à jour la liste des jours disponibles. Conserve la semaine / le jour déjà
+ * affichés s'ils existent encore ; s'ils étaient sur le tout dernier jour,
+ * ils suivent le nouveau dernier jour (ex. après un nouvel import).
+ */
+function syncSharedSelection(keys) {
+  const prevLast = allDayKeys.length ? allDayKeys[allDayKeys.length - 1] : null;
+  allDayKeys = keys.slice().sort();
+  const last = allDayKeys.length ? allDayKeys[allDayKeys.length - 1] : null;
+  const follow = (cur) => (cur === null || cur === prevLast || !allDayKeys.includes(cur) ? last : cur);
+  sharedWeekEndKey = follow(sharedWeekEndKey);
+  sharedDayKey = follow(sharedDayKey);
+}
+
+/** Les 7 jours (ou moins) de la semaine affichée. */
+function weekWindowKeys() {
+  const end = allDayKeys.indexOf(sharedWeekEndKey);
+  if (end < 0) return [];
+  return allDayKeys.slice(Math.max(0, end - 6), end + 1);
+}
+
+/** Libellé de la semaine et état des flèches pour un graphique hebdomadaire (préfixe : "ov", "batt" ou "ballon"). */
+function applyWeekNav(prefix, keys) {
+  const end = allDayKeys.indexOf(sharedWeekEndKey);
+  const start = Math.max(0, end - 6);
+  const lastKey = keys[keys.length - 1];
+  document.getElementById(prefix + "WeekLabel").textContent =
+    fmtJourMois(keys[0]) + " → " + fmtJourMois(lastKey) + "/" + lastKey.slice(0, 4);
+  document.getElementById(prefix + "WeekPrevBtn").disabled = start <= 0;
+  document.getElementById(prefix + "WeekNextBtn").disabled = end >= allDayKeys.length - 1;
+}
+
+/** Décale la semaine de 7 jours, sans jamais descendre sous une fenêtre complète (si l'historique le permet). */
+function shiftWeek(direction) {
+  if (allDayKeys.length === 0) return;
+  const end = allDayKeys.indexOf(sharedWeekEndKey);
+  const minEnd = Math.min(6, allDayKeys.length - 1);
+  const newEnd = direction < 0 ? Math.max(minEnd, end - 7) : Math.min(allDayKeys.length - 1, end + 7);
+  sharedWeekEndKey = allDayKeys[newEnd];
+  renderAllWeeklyViews();
+}
+
+/** Passe au jour précédent (-1) ou suivant (+1) sur les deux graphiques journaliers. */
+function shiftDay(direction) {
+  const j = allDayKeys.indexOf(sharedDayKey) + direction;
+  if (j < 0 || j >= allDayKeys.length) return;
+  sharedDayKey = allDayKeys[j];
+  renderAllDailyViews();
+}
+
+function renderAllWeeklyViews() {
+  renderOverviewWeeklyView();
+  renderBattWeeklyView();
+  renderBallonWeeklyView();
+}
+
+function renderAllDailyViews() {
+  renderDailyView();
+  renderBallonDailyView();
+}
+
+/**
+ * Cadre commun des graphiques à bâtons hebdomadaires (3 barres par jour, axe kWh à gauche).
+ * opts : { maxVal, padR?, drawDay(d, cx, g) → SVG des barres d'un jour, extra?(g) → SVG ajouté par-dessus }.
+ * g fournit : yAt(v), baseY, padT, plotH, W, H, padL, padR, bar(cx, yHaut, yBas, couleur), label(cx, y, texte), slot(cx, k).
+ */
+function buildWeeklyBarsSVG(days, opts) {
+  const W = 700, H = 290;
+  const padL = 40, padR = opts.padR || 10, padT = 22, padB = 28;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const nBars = 3;
+  const n = Math.max(days.length, 1);
+
+  const slotW = plotW / n;
+  const barW = Math.min(slotW / (nBars + 1.2), 30);
+  const step = barW * 1.25; // écart entre centres de barres voisines
+  const baseY = padT + plotH;
+  const yAt = (v) => padT + plotH * (1 - v / opts.maxVal);
+
+  const g = {
+    W, H, padL, padR, padT, plotH, baseY, yAt,
+    bar: (cx, yTop, yBottom, color) =>
+      '<rect x="' + (cx - barW / 2).toFixed(1) + '" y="' + yTop.toFixed(1) + '" width="' + barW.toFixed(1) +
+      '" height="' + Math.max(0, yBottom - yTop).toFixed(1) + '" fill="' + color + '" rx="2" />',
+    label: (cx, y, text) =>
+      '<text x="' + cx.toFixed(1) + '" y="' + (y - 4).toFixed(1) + '" fill="#eef2f6" font-size="10" font-weight="600" text-anchor="middle">' + text + "</text>",
+    slot: (cx, k) => cx + (k - 1) * step, // centre de la k-ième barre (0, 1 ou 2) d'un jour
+  };
 
   const gridLines = [0, 0.25, 0.5, 0.75, 1].map((f) => {
     const yy = (padT + plotH * (1 - f)).toFixed(1);
     return '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="#2a333f" stroke-width="1" />';
   }).join("");
-  const yLabels = [0, maxVal / 2, maxVal].map((v) => '<text x="' + (padL - 6) + '" y="' + (yAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">' + v.toFixed(0) + "</text>").join("");
+  const yLabels = [0, opts.maxVal / 2, opts.maxVal].map((v) =>
+    '<text x="' + (padL - 6) + '" y="' + (yAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">' + v.toFixed(1) + "</text>"
+  ).join("");
 
-  return '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">' + gridLines + yLabels + bars + "</svg>";
+  let bars = "";
+  days.forEach((d, i) => {
+    const cx = padL + i * slotW + slotW / 2;
+    bars += opts.drawDay(d, cx, g);
+    bars += '<text x="' + cx.toFixed(1) + '" y="' + (H - 8) + '" fill="#93a1b0" font-size="10" text-anchor="middle">' + fmtJourMois(d.key) + "</text>";
+  });
+
+  const extra = opts.extra ? opts.extra(g) : "";
+  return '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">' + gridLines + yLabels + bars + extra + "</svg>";
 }
+
+/* ---------- Mon scénario → Batterie ---------- */
+
+function renderBattWeeklyView() {
+  const keys = weekWindowKeys();
+  if (keys.length === 0) {
+    document.getElementById("battWeekLabel").textContent = "Aucune donnée";
+    document.getElementById("battWeeklyChart").innerHTML = "";
+    return;
+  }
+  applyWeekNav("batt", keys);
+  const days = keys.map((k) => battDayMap.get(k) || { key: k, prod: 0, autoDirecte: 0, stocke: 0, maxSoc: 0 });
+  document.getElementById("battWeeklyChart").innerHTML = buildBattWeeklyBarsSVG(days);
+}
+
+/**
+ * 3 barres par jour (kWh) : production PV ; barre empilée autoconsommation
+ * directe (bleu) + énergie stockée en batterie (vert) ; niveau max de la batterie.
+ */
+function buildBattWeeklyBarsSVG(days) {
+  const maxVal = Math.max(0.1, ...days.map((d) => Math.max(d.prod, d.autoDirecte + d.stocke, d.maxSoc))) * 1.15;
+  return buildWeeklyBarsSVG(days, {
+    maxVal,
+    drawDay: (d, cx, g) => {
+      const total = d.autoDirecte + d.stocke;
+      return (
+        g.bar(g.slot(cx, 0), g.yAt(d.prod), g.baseY, "#f0a94e") + g.label(g.slot(cx, 0), g.yAt(d.prod), d.prod.toFixed(1)) +
+        g.bar(g.slot(cx, 1), g.yAt(d.autoDirecte), g.baseY, "#7c93c9") +
+        g.bar(g.slot(cx, 1), g.yAt(total), g.yAt(d.autoDirecte), "#4fc9a0") + g.label(g.slot(cx, 1), g.yAt(total), total.toFixed(1)) +
+        g.bar(g.slot(cx, 2), g.yAt(d.maxSoc), g.baseY, "#c97bda") + g.label(g.slot(cx, 2), g.yAt(d.maxSoc), d.maxSoc.toFixed(1))
+      );
+    },
+  });
+}
+
+/* ---------- Mon scénario → Ballon ECS ---------- */
+
+function renderBallonWeeklyView() {
+  const keys = weekWindowKeys();
+  if (keys.length === 0) {
+    document.getElementById("ballonWeekLabel").textContent = "Aucune donnée";
+    document.getElementById("ballonWeeklyChart").innerHTML = "";
+    return;
+  }
+  applyWeekNav("ballon", keys);
+  const days = keys.map((k) => ballonDayMap.get(k) || { key: k, prod: 0, autoDirecte: 0, diverti: 0, maxTemp: settings.ballonTempFroide });
+  document.getElementById("ballonWeeklyChart").innerHTML = buildBallonWeeklyBarsSVG(days);
+}
+
+/**
+ * 3 barres par jour : production PV (kWh) ; barre empilée autoconsommation directe
+ * (bleu) + énergie déviée vers le ballon (vert), en kWh ; température maximale du
+ * ballon (°C, échelle de droite), avec un repère pointillé sur la consigne.
+ */
+function buildBallonWeeklyBarsSVG(days) {
+  const consigne = settings.ballonTempConsigne;
+  const maxVal = Math.max(0.1, ...days.map((d) => Math.max(d.prod, d.autoDirecte + d.diverti))) * 1.15;
+  const maxTemp = Math.max(settings.ballonTempLimite, consigne, ...days.map((d) => d.maxTemp)) + 5;
+  const yTempOf = (g, v) => g.padT + g.plotH * (1 - v / maxTemp);
+
+  return buildWeeklyBarsSVG(days, {
+    maxVal,
+    padR: 38,
+    drawDay: (d, cx, g) => {
+      const total = d.autoDirecte + d.diverti;
+      const tempColor = d.maxTemp >= consigne ? "#e07a5f" : "#8c5a4e"; // vif : consigne atteinte, terne : non atteinte
+      const yT = yTempOf(g, d.maxTemp);
+      return (
+        g.bar(g.slot(cx, 0), g.yAt(d.prod), g.baseY, "#f0a94e") + g.label(g.slot(cx, 0), g.yAt(d.prod), d.prod.toFixed(1)) +
+        g.bar(g.slot(cx, 1), g.yAt(d.autoDirecte), g.baseY, "#7c93c9") +
+        g.bar(g.slot(cx, 1), g.yAt(total), g.yAt(d.autoDirecte), "#4fc9a0") + g.label(g.slot(cx, 1), g.yAt(total), total.toFixed(1)) +
+        g.bar(g.slot(cx, 2), yT, g.baseY, tempColor) + g.label(g.slot(cx, 2), yT, Math.round(d.maxTemp) + "°")
+      );
+    },
+    extra: (g) => {
+      const ticks = [0, 20, 40, 60, 80].filter((v) => v <= maxTemp).map((v) =>
+        '<text x="' + (g.W - g.padR + 6) + '" y="' + (yTempOf(g, v) + 3).toFixed(1) + '" fill="#c98a7a" font-size="10" text-anchor="start">' + v + "°</text>"
+      ).join("");
+      const yC = yTempOf(g, consigne).toFixed(1);
+      const consigneLine =
+        '<line x1="' + g.padL + '" y1="' + yC + '" x2="' + (g.W - g.padR) + '" y2="' + yC + '" stroke="#eef2f6" stroke-opacity="0.45" stroke-width="1" stroke-dasharray="4 3" />' +
+        '<text x="' + (g.W - g.padR - 2) + '" y="' + (yTempOf(g, consigne) - 4).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">consigne ' + consigne + "°</text>";
+      return ticks + consigneLine;
+    },
+  });
+}
+
+/* ---------- Vue d'ensemble : batterie et ballon côte à côte ---------- */
+
+function renderOverviewWeeklyView() {
+  const keys = weekWindowKeys();
+  if (keys.length === 0) {
+    document.getElementById("ovWeekLabel").textContent = "Aucune donnée";
+    document.getElementById("ovWeeklyChart").innerHTML = "";
+    return;
+  }
+  applyWeekNav("ov", keys);
+  const days = keys.map((k) => {
+    const b = battDayMap.get(k);
+    const a = ballonDayMap.get(k);
+    return {
+      key: k,
+      prod: b ? b.prod : 0,
+      autoDirecte: b ? b.autoDirecte : 0,
+      stockeBatt: b ? b.stocke : 0,
+      divertiBallon: a ? a.diverti : 0,
+    };
+  });
+  document.getElementById("ovWeeklyChart").innerHTML = buildOverviewWeeklyBarsSVG(days);
+}
+
+/**
+ * 3 barres par jour (kWh) : production PV ; barre empilée du scénario batterie
+ * (autoconsommation directe + stocké) ; barre empilée du scénario ballon
+ * (autoconsommation directe + énergie déviée vers le ballon).
+ */
+function buildOverviewWeeklyBarsSVG(days) {
+  const maxVal = Math.max(0.1, ...days.map((d) => Math.max(d.prod, d.autoDirecte + d.stockeBatt, d.autoDirecte + d.divertiBallon))) * 1.15;
+  return buildWeeklyBarsSVG(days, {
+    maxVal,
+    drawDay: (d, cx, g) => {
+      const totBatt = d.autoDirecte + d.stockeBatt;
+      const totBallon = d.autoDirecte + d.divertiBallon;
+      return (
+        g.bar(g.slot(cx, 0), g.yAt(d.prod), g.baseY, "#f0a94e") + g.label(g.slot(cx, 0), g.yAt(d.prod), d.prod.toFixed(1)) +
+        g.bar(g.slot(cx, 1), g.yAt(d.autoDirecte), g.baseY, "#7c93c9") +
+        g.bar(g.slot(cx, 1), g.yAt(totBatt), g.yAt(d.autoDirecte), "#4fc9a0") + g.label(g.slot(cx, 1), g.yAt(totBatt), totBatt.toFixed(1)) +
+        g.bar(g.slot(cx, 2), g.yAt(d.autoDirecte), g.baseY, "#7c93c9") +
+        g.bar(g.slot(cx, 2), g.yAt(totBallon), g.yAt(d.autoDirecte), "#c97bda") + g.label(g.slot(cx, 2), g.yAt(totBallon), totBallon.toFixed(1))
+      );
+    },
+  });
+}
+
+// Flèches de navigation : les 3 graphiques hebdomadaires partagent la même semaine.
+document.getElementById("ovWeekPrevBtn").addEventListener("click", () => shiftWeek(-1));
+document.getElementById("ovWeekNextBtn").addEventListener("click", () => shiftWeek(1));
+document.getElementById("battWeekPrevBtn").addEventListener("click", () => shiftWeek(-1));
+document.getElementById("battWeekNextBtn").addEventListener("click", () => shiftWeek(1));
+document.getElementById("ballonWeekPrevBtn").addEventListener("click", () => shiftWeek(-1));
+document.getElementById("ballonWeekNextBtn").addEventListener("click", () => shiftWeek(1));
 
 /* ============================================================
    6b. VUE JOURNALIÈRE — navigation < / > entre les jours
    ============================================================ */
 
-let dailySeries = [];   // série complète de la dernière simulation
-let dayKeys = [];       // clés "YYYY-MM-DD" triées, une par jour disponible
-let currentDayIndex = -1;
+let dailySeries = [];   // série horaire complète de la dernière simulation (batterie)
 
 function dayKeyOf(date) {
   const y = date.getFullYear();
@@ -808,31 +1050,19 @@ function dayKeyOf(date) {
   return y + "-" + m + "-" + d;
 }
 
-function initDailyView(series) {
-  dailySeries = series;
-  const seen = new Set();
-  dayKeys = [];
-  for (const p of series) {
-    const key = dayKeyOf(p.t);
-    if (!seen.has(key)) { seen.add(key); dayKeys.push(key); }
-  }
-  dayKeys.sort();
-  currentDayIndex = dayKeys.length - 1; // le jour le plus récent par défaut
-  renderDailyView();
-}
-
 function renderDailyView() {
-  if (dayKeys.length === 0) {
+  if (!sharedDayKey) {
     document.getElementById("dayLabel").textContent = "Aucune donnée";
     return;
   }
-  const key = dayKeys[currentDayIndex];
+  const key = sharedDayKey; // jour partagé avec le graphique journalier du ballon
+  const dayIndex = allDayKeys.indexOf(key);
   const points = dailySeries.filter((p) => dayKeyOf(p.t) === key);
 
   const [y, m, d] = key.split("-");
   document.getElementById("dayLabel").textContent = d + "/" + m + "/" + y;
-  document.getElementById("dayPrevBtn").disabled = currentDayIndex <= 0;
-  document.getElementById("dayNextBtn").disabled = currentDayIndex >= dayKeys.length - 1;
+  document.getElementById("dayPrevBtn").disabled = dayIndex <= 0;
+  document.getElementById("dayNextBtn").disabled = dayIndex >= allDayKeys.length - 1;
 
   document.getElementById("dailyChart").innerHTML = buildLineChartSVG(points);
   document.getElementById("chartSettingsNote").textContent =
@@ -913,12 +1143,9 @@ function buildLineChartSVG(points) {
   );
 }
 
-document.getElementById("dayPrevBtn").addEventListener("click", () => {
-  if (currentDayIndex > 0) { currentDayIndex--; renderDailyView(); }
-});
-document.getElementById("dayNextBtn").addEventListener("click", () => {
-  if (currentDayIndex < dayKeys.length - 1) { currentDayIndex++; renderDailyView(); }
-});
+// Flèches du jour : les deux graphiques journaliers (batterie et ballon) partagent le même jour.
+document.getElementById("dayPrevBtn").addEventListener("click", () => shiftDay(-1));
+document.getElementById("dayNextBtn").addEventListener("click", () => shiftDay(1));
 
 /* ============================================================
    6. RENDU DES RÉSULTATS (KPIs)
@@ -972,15 +1199,14 @@ function renderResults(result) {
       ? (settings.prixBatterie / energieCycleeVie).toLocaleString("fr-FR", { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + " €/kWh"
       : "N/A";
 
-  initDailyView(result.series);
-
-  const dailyAutoconso = computeDailyAutoconsoSeries(result.series);
-  document.getElementById("autoconsoEvolutionChart").innerHTML = buildAutoconsoEvolutionSVG(dailyAutoconso);
-
-  const monthlyHistory = computeMonthlyHistory(result.series);
-  document.getElementById("monthlyHistoryChart").innerHTML = buildMonthlyHistorySVG(monthlyHistory);
-
-  renderBallonPage();
+  // Données des graphiques (batterie, puis ballon), puis sélection semaine/jour partagée
+  dailySeries = result.series;
+  const battBilan = computeBattDailyBilan(result.series);
+  battDayMap = new Map(battBilan.map((d) => [d.key, d]));
+  renderBallonPage(); // KPIs du ballon + données par jour (ballonDayMap)
+  syncSharedSelection(battBilan.map((d) => d.key));
+  renderAllWeeklyViews();
+  renderAllDailyViews();
   renderSynthesePage();
 }
 
@@ -990,7 +1216,7 @@ function renderResults(result) {
 
 function fmtAnnees2(v) { return fmtAnnees(v); }
 
-let ballonDailySeries = [], ballonDayKeys = [], ballonCurrentDayIndex = -1;
+let ballonDailySeries = []; // série horaire complète de la dernière simulation (ballon)
 
 function renderBallonPage() {
   if (masterData.size === 0) return;
@@ -1010,28 +1236,22 @@ function renderBallonPage() {
   document.getElementById("ballonKpiRoi").textContent = fmtAnnees2(roiBallon);
 
   ballonDailySeries = r.series;
-  const seen = new Set();
-  ballonDayKeys = [];
-  for (const p of ballonDailySeries) {
-    const key = dayKeyOf(p.t);
-    if (!seen.has(key)) { seen.add(key); ballonDayKeys.push(key); }
-  }
-  ballonCurrentDayIndex = ballonDayKeys.length - 1;
-  renderBallonDailyView();
+  ballonDayMap = new Map(computeBallonDailyBilan(r.series).map((d) => [d.key, d]));
 }
 
 function renderBallonDailyView() {
-  if (ballonDayKeys.length === 0) {
+  if (!sharedDayKey) {
     document.getElementById("ballonDayLabel").textContent = "Aucune donnée";
     return;
   }
-  const key = ballonDayKeys[ballonCurrentDayIndex];
+  const key = sharedDayKey; // jour partagé avec le graphique journalier de la batterie
+  const dayIndex = allDayKeys.indexOf(key);
   const points = ballonDailySeries.filter((p) => dayKeyOf(p.t) === key);
 
   const [y, m, d] = key.split("-");
   document.getElementById("ballonDayLabel").textContent = d + "/" + m + "/" + y;
-  document.getElementById("ballonDayPrevBtn").disabled = ballonCurrentDayIndex <= 0;
-  document.getElementById("ballonDayNextBtn").disabled = ballonCurrentDayIndex >= ballonDayKeys.length - 1;
+  document.getElementById("ballonDayPrevBtn").disabled = dayIndex <= 0;
+  document.getElementById("ballonDayNextBtn").disabled = dayIndex >= allDayKeys.length - 1;
 
   document.getElementById("ballonDailyChart").innerHTML = buildBallonTempChartSVG(points);
 }
@@ -1089,12 +1309,9 @@ function buildBallonTempChartSVG(points) {
   );
 }
 
-document.getElementById("ballonDayPrevBtn").addEventListener("click", () => {
-  if (ballonCurrentDayIndex > 0) { ballonCurrentDayIndex--; renderBallonDailyView(); }
-});
-document.getElementById("ballonDayNextBtn").addEventListener("click", () => {
-  if (ballonCurrentDayIndex < ballonDayKeys.length - 1) { ballonCurrentDayIndex++; renderBallonDailyView(); }
-});
+// Flèches du jour : partagées avec le graphique journalier de la batterie.
+document.getElementById("ballonDayPrevBtn").addEventListener("click", () => shiftDay(-1));
+document.getElementById("ballonDayNextBtn").addEventListener("click", () => shiftDay(1));
 
 /* ============================================================
    9c. PAGE SYNTHÈSE — comparaison des 3 scénarios
@@ -1161,67 +1378,6 @@ function renderSynthesePage() {
     }
   }
   document.getElementById("summaryText").textContent = resume;
-}
-
-/**
- * Regroupe la série horaire par jour pour obtenir le taux d'autoconsommation
- * quotidien, sans puis avec batterie, sur toute la période chargée.
- */
-function computeDailyAutoconsoSeries(series) {
-  const byDay = new Map();
-  for (const p of series) {
-    const key = dayKeyOf(p.t);
-    if (!byDay.has(key)) byDay.set(key, { t: p.t, prod: 0, conso: 0, autoDirecte: 0, dech: 0 });
-    const e = byDay.get(key);
-    e.prod += p.prod;
-    e.conso += p.consoTotale;
-    e.autoDirecte += Math.max(0, p.prod - p.retour);
-    e.dech += p.dech;
-  }
-  const days = Array.from(byDay.values()).sort((a, b) => a.t - b.t);
-  return days.map((d) => ({
-    t: d.t,
-    pctSansBatt: d.prod > 0 ? (d.autoDirecte / d.prod) * 100 : 0,
-    pctAvecBatt: d.prod > 0 ? Math.min(100, ((d.autoDirecte + d.dech) / d.prod) * 100) : 0,
-    pctAutoproduction: d.conso > 0 ? Math.min(100, ((d.autoDirecte + d.dech) / d.conso) * 100) : 0,
-  }));
-}
-
-/** Graphique SVG natif : deux courbes de % (0-100), une par jour de la période. */
-function buildAutoconsoEvolutionSVG(days) {
-  const W = 700, H = 260;
-  const padL = 36, padR = 16, padT = 14, padB = 28;
-  const plotW = W - padL - padR, plotH = H - padT - padB;
-  const n = days.length;
-
-  const xAt = (i) => padL + (n > 1 ? (i * plotW) / (n - 1) : plotW / 2);
-  const yAt = (v) => padT + plotH * (1 - Math.max(0, Math.min(100, v)) / 100);
-  const pathOf = (vals) => vals.map((v, i) => (i === 0 ? "M" : "L") + xAt(i).toFixed(1) + " " + yAt(v).toFixed(1)).join(" ");
-
-  const gridLines = [0, 25, 50, 75, 100].map((v) => {
-    const yy = yAt(v).toFixed(1);
-    return '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="#2a333f" stroke-width="1" />';
-  }).join("");
-  const yLabels = [0, 50, 100].map((v) =>
-    '<text x="' + (padL - 6) + '" y="' + (yAt(v) + 3).toFixed(1) + '" fill="#93a1b0" font-size="10" text-anchor="end">' + v + "%</text>"
-  ).join("");
-
-  const step = Math.max(1, Math.ceil(n / 8));
-  const xLabels = days.map((d, i) => {
-    if (i % step !== 0 && i !== n - 1) return "";
-    const dt = new Date(d.t);
-    const lab = String(dt.getDate()).padStart(2, "0") + "/" + String(dt.getMonth() + 1).padStart(2, "0");
-    return '<text x="' + xAt(i).toFixed(1) + '" y="' + (H - 8) + '" fill="#93a1b0" font-size="10" text-anchor="middle">' + lab + "</text>";
-  }).join("");
-
-  return (
-    '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">' +
-    gridLines + xLabels + yLabels +
-    '<path d="' + pathOf(days.map((d) => d.pctSansBatt)) + '" fill="none" stroke="#7c93c9" stroke-width="2" />' +
-    '<path d="' + pathOf(days.map((d) => d.pctAvecBatt)) + '" fill="none" stroke="#4fc9a0" stroke-width="2.5" />' +
-    '<path d="' + pathOf(days.map((d) => d.pctAutoproduction)) + '" fill="none" stroke="#f0a94e" stroke-width="2" stroke-dasharray="4 3" />' +
-    "</svg>"
-  );
 }
 
 /* ============================================================
